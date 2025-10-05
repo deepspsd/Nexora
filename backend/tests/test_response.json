@@ -1,0 +1,114 @@
+{
+  "winsurf_response": {
+    "id": "e4046418-19c4-41da-b4b2-883c17d14de2",
+    "title": "MVP: \n        Build a simple Hello World web page with:",
+    "stack": {
+      "frontend": "Next.js",
+      "backend": "Fastify",
+      "db": "PostgreSQL",
+      "styling": "Tailwind CSS",
+      "testing": "Jest + Playwright",
+      "ci_cd": "GitHub Actions"
+    },
+    "spec_summary": "\n        Build a simple Hello World web page with:\n        - Clean, modern design\n        - Centered heading\n        - Gradient background\n        - Responsive layout\n        ",
+    "files": [
+      {
+        "path": "package.json",
+        "preview": "{\n  \"name\": \"hello-world-app\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"dev\": \"next dev\",\n    \"build\": \"next build\",\n    \"start\": \"next start\",\n    \"lint\": \"eslint .\",\n    \"test\": \"jest\",\n    \"e2e\": ...",
+        "size": 593,
+        "language": "json"
+      },
+      {
+        "path": "src/pages/index.tsx",
+        "preview": "import React from 'react';\n\nexport default function Home() {\n  return (\n    <div className=\"min-h-screen flex items-center justify-center bg-gradient-to-r from-blue-500 to-purple-600\">\n      <h1 class...",
+        "size": 279,
+        "language": "tsx"
+      },
+      {
+        "path": "src/server.ts",
+        "preview": "import fastify from 'fastify';\n\nconst server = fastify({ logger: true });\n\nserver.get('/health', async (request, reply) => {\n  return { status: 'ok' };\n});\n\nconst start = async () => {\n  try {\n    awa...",
+        "size": 396,
+        "language": "ts"
+      },
+      {
+        "path": "tests/unit/index.test.ts",
+        "preview": "import { render, screen } from '@testing-library/react';\nimport Home from '../../src/pages/index';\n\ndescribe('Home', () => {\n  it('renders a heading', () => {\n    render(<Home />);\n    const heading =...",
+        "size": 315,
+        "language": "ts"
+      },
+      {
+        "path": "tests/e2e/example.spec.ts",
+        "preview": "import { test, expect } from '@playwright/test';\n\ntest('homepage has Hello World', async ({ page }) => {\n  await page.goto('http://localhost:3000');\n  await expect(page.locator('h1')).toContainText('H...",
+        "size": 222,
+        "language": "ts"
+      },
+      {
+        "path": "tailwind.config.js",
+        "preview": "module.exports = {\n  content: [\n    './src/pages/**/*.{js,ts,jsx,tsx}',\n    './src/components/**/*.{js,ts,jsx,tsx}'\n  ],\n  theme: {\n    extend: {},\n  },\n  plugins: [],\n}",
+        "size": 178,
+        "language": "js"
+      },
+      {
+        "path": ".env.example",
+        "preview": "DATABASE_URL=postgres://user:password@localhost:5432/helloworld",
+        "size": 63,
+        "language": "example"
+      },
+      {
+        "path": "Dockerfile",
+        "preview": "FROM node:18\n\nWORKDIR /app\n\nCOPY package*.json ./\nRUN npm install\n\nCOPY . .\n\nEXPOSE 3000\n\nCMD [\"npm\", \"run\", \"dev\"]",
+        "size": 126,
+        "language": "txt"
+      },
+      {
+        "path": "docker-compose.yml",
+        "preview": "version: '3.8'\n\nservices:\n  app:\n    build: .\n    ports:\n      - '3000:3000'\n    environment:\n      DATABASE_URL: postgres://user:password@db:5432/helloworld\n    depends_on:\n      - db\n  db:\n    image...",
+        "size": 369,
+        "language": "yml"
+      },
+      {
+        "path": ".github/workflows/ci.yml",
+        "preview": "name: CI\n\non:\n  push:\n    branches: [ main ]\n  pull_request:\n    branches: [ main ]\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v2\n      - name: Set up Node.js...",
+        "size": 425,
+        "language": "yml"
+      },
+      {
+        "path": "README.md",
+        "preview": "# Hello World App\n\n## Setup\n\n1. Clone the repository\n2. Run `npm install`\n3. Start the development server with `npm run dev`\n\n## Running Tests\n\n- Unit tests: `npm test`\n- End-to-end tests: `npm run e2...",
+        "size": 554,
+        "language": "md"
+      }
+    ],
+    "artifact_zip": "file://C:\\Users\\svdy1\\AppData\\Local\\Temp\\artifact-e4046418-19c4-41da-b4b2-883c17d14de2.zip",
+    "preview_url": "Not available",
+    "e2b_embed": "Not available",
+    "build": {
+      "status": "failed",
+      "logs": "npm ci:\n\nnpm error code EUSAGE\nnpm error\nnpm error The `npm ci` command can only install with an existing package-lock.json or\nnpm error npm-shrinkwrap.json with lockfileVersion >= 1. Run an install with npm@5 or\nnpm error later to generate a package-lock.json file, then try again.\nnpm error\nnpm error Clean install a project\nnpm error\nnpm error Usage:\nnpm error npm ci\nnpm error\nnpm error Options:\nnpm error [--install-strategy <hoisted|nested|shallow|linked>] [--legacy-bundling]\nnpm error [--global-style] [--omit <dev|optional|peer> [--omit <dev|optional|peer> ...]]\nnpm error [--include <prod|dev|optional|peer> [--include <prod|dev|optional|peer> ...]]\nnpm error [--strict-peer-deps] [--foreground-scripts] [--ignore-scripts] [--no-audit]\nnpm error [--no-bin-links] [--no-fund] [--dry-run]\nnpm error [-w|--workspace <workspace-name> [-w|--workspace <workspace-name> ...]]\nnpm error [--workspaces] [--include-workspace-root] [--install-links]\nnpm error\nnpm error aliases: clean-install, ic, install-clean, isntall-clean\nnpm error\nnpm error Run \"npm help ci\" for more info\nnpm error A complete log of this run can be found in: C:\\Users\\svdy1\\AppData\\Local\\npm-cache\\_logs\\2025-10-05T13_14_54_033Z-debug-0.log\n",
+      "duration": 0.706587,
+      "timestamp": "2025-10-05T18:44:54.480819"
+    },
+    "tests": {
+      "status": "failed",
+      "details": [
+        {
+          "error": "Build failed before tests could run"
+        }
+      ],
+      "passed": 0,
+      "failed": 0,
+      "total": 0
+    },
+    "deploy": {
+      "status": "skipped",
+      "instructions": "Deployment Options:\n\n1. **Vercel** (Recommended for Next.js):\n   - Install Vercel CLI: `npm i -g vercel`\n   - Run: `vercel --prod`\n\n2. **Docker**:\n   - Build: `docker-compose up --build`\n   - Access at http://localhost:3000\n\n3. **Manual**:\n   - Install dependencies: `npm install`\n   - Build: `npm run build`\n   - Start: `npm start`\n\nEnvironment variables required (see .env.example)",
+      "url": null,
+      "platform": null
+    },
+    "scrape_log": [],
+    "patches": [],
+    "next_steps": "\u2705 Project generated successfully!\n\n**Next Steps:**\n1. Download the ZIP file and extract it\n2. Review the README.md for setup instructions\n3. Configure environment variables (see .env.example)\n4. Run locally: `npm install && npm run dev`\n5. Deploy using one of the provided methods\n\n**Live Preview:** Not available\n\n**Build Status:** failed\n**Tests:** 0/0 passed\n**Patches Applied:** 0",
+    "created_at": "2025-10-05T18:45:22.269606",
+    "user_subscription": "free"
+  }
+}

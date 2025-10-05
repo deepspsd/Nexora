@@ -1,0 +1,248 @@
+{
+  "deck_id": "d490033c-adc5-4f87-8fc4-4659e8d1a9d7",
+  "business_name": "LinguaAI",
+  "tagline": "LinguaAI: Learn languages through real-world conversations",
+  "design_theme": {
+    "name": "Lingua",
+    "primary_color": "#3498db",
+    "secondary_color": "#f1c40f",
+    "font_family": "Montserrat"
+  },
+  "slides": [
+    {
+      "slide_number": 1,
+      "title": "LinguaAI - Revolutionizing Language Learning",
+      "content": [
+        "LinguaAI: Learn languages through real-world conversations",
+        "Founded by: John Doe, language learning enthusiast and AI expert",
+        "Tagline: Speak like a native, anywhere in the world"
+      ],
+      "chart_type": null
+    },
+    {
+      "slide_number": 2,
+      "title": "Problem: Ineffective Language Learning Methods",
+      "content": [
+        "Traditional language learning methods are often boring and ineffective",
+        "Lack of real-world conversation practice leads to poor speaking skills",
+        "Current solutions are limited, expensive, or both"
+      ],
+      "chart_type": null
+    },
+    {
+      "slide_number": 3,
+      "title": "Solution: AI-Powered Language Learning",
+      "content": [
+        "LinguaAI uses AI to simulate real-world conversations",
+        "Personalized learning paths based on user goals and progress",
+        "Interactive and engaging, with real-time feedback and correction"
+      ],
+      "chart_type": null
+    },
+    {
+      "slide_number": 4,
+      "title": "Market Opportunity",
+      "content": [
+        "Total Addressable Market (TAM): $60 billion language learning market",
+        "Serviceable Available Market (SAM): $10 billion mobile language learning",
+        "Serviceable Obtainable Market (SOM): $1 billion target market for LinguaAI"
+      ],
+      "chart_type": "bar"
+    },
+    {
+      "slide_number": 5,
+      "title": "Product: Key Features and Demo",
+      "content": [
+        "Conversational interface with AI-powered chatbots",
+        "Speech recognition and pronunciation analysis",
+        "Gamification and social sharing features"
+      ],
+      "chart_type": null
+    },
+    {
+      "slide_number": 6,
+      "title": "Business Model",
+      "content": [
+        "Freemium model with in-app purchases and subscriptions",
+        "Revenue streams: premium features, advertising, and partnerships",
+        "Data analytics and AI training services for enterprises"
+      ],
+      "chart_type": null
+    },
+    {
+      "slide_number": 7,
+      "title": "Traction and Milestones",
+      "content": [
+        "10,000+ beta users with 4.5-star rating",
+        "Partnerships with language schools and universities",
+        "Featured in major media outlets and language learning blogs"
+      ],
+      "chart_type": "line"
+    },
+    {
+      "slide_number": 8,
+      "title": "Competition",
+      "content": [
+        "Duolingo: gamified language learning, but limited conversation practice",
+        "Rosetta Stone: comprehensive language learning, but expensive and traditional",
+        "Babbel: interactive language learning, but limited AI-powered features"
+      ],
+      "chart_type": null
+    },
+    {
+      "slide_number": 9,
+      "title": "Team",
+      "content": [
+        "John Doe: Founder and CEO, language learning enthusiast and AI expert",
+        "Jane Smith: CTO, experienced in AI and mobile app development",
+        "Bob Johnson: Marketing Lead, expert in user acquisition and growth hacking"
+      ],
+      "chart_type": null
+    },
+    {
+      "slide_number": 10,
+      "title": "Financial Projections",
+      "content": [
+        "Revenue: $250,000 (year 1), $1 million (year 2), $5 million (year 3)",
+        "User acquisition cost: $10 per user, with 20% monthly retention",
+        "Break-even point: 6 months after launch"
+      ],
+      "chart_type": "line"
+    },
+    {
+      "slide_number": 11,
+      "title": "The Ask",
+      "content": [
+        "Funding amount: $1,000,000",
+        "Use of funds: product development, marketing, and hiring",
+        "Expected outcome: accelerated growth, expanded user base, and increased revenue"
+      ],
+      "chart_type": null
+    },
+    {
+      "slide_number": 12,
+      "title": "Closing",
+      "content": [
+        "Join the language learning revolution with LinguaAI",
+        "Transform the way people learn languages, anywhere in the world",
+        "Invest in LinguaAI today and help us change the future of language learning"
+      ],
+      "chart_type": null
+    }
+  ],
+  "demo_script": {
+    "duration_minutes": 5.0,
+    "pacing_cues": [
+      "Vary tone and pitch to keep the audience engaged",
+      "Make eye contact with the audience",
+      "Use gestures to emphasize key points"
+    ],
+    "emphasis_points": [
+      "Unique approach to language learning",
+      "Targeting a $1 billion market",
+      "Experienced team with a clear vision"
+    ]
+  },
+  "investor_qa": [
+    {
+      "question": "How will LinguaAI generate revenue, and what is the pricing strategy?",
+      "category": "financial",
+      "difficulty": "easy",
+      "key_points": [
+        "Revenue model",
+        "Pricing strategy",
+        "Competitive pricing"
+      ]
+    },
+    {
+      "question": "What is the expected customer acquisition cost (CAC) and how will you ensure scalability in user growth?",
+      "category": "market",
+      "difficulty": "medium",
+      "key_points": [
+        "CAC estimation",
+        "Growth strategy",
+        "Scalability"
+      ]
+    },
+    {
+      "question": "How does LinguaAI's AI technology differ from existing language learning apps, and what makes it more effective?",
+      "category": "product",
+      "difficulty": "medium",
+      "key_points": [
+        "AI differentiation",
+        "Effectiveness",
+        "Personalization"
+      ]
+    },
+    {
+      "question": "What is the team's experience in the language learning or education sector, and how does it give LinguaAI a competitive edge?",
+      "category": "team",
+      "difficulty": "medium",
+      "key_points": [
+        "Team expertise",
+        "Competitive edge",
+        "Relevance of experience"
+      ]
+    },
+    {
+      "question": "How will LinguaAI retain users long-term, given the competitive nature of the language learning market?",
+      "category": "market",
+      "difficulty": "hard",
+      "key_points": [
+        "User retention",
+        "Engagement strategies",
+        "Competitive differentiation"
+      ]
+    },
+    {
+      "question": "What is the go-to-market strategy, and how much of the $1 billion SOM can LinguaAI realistically capture in the first three years?",
+      "category": "market",
+      "difficulty": "hard",
+      "key_points": [
+        "Go-to-market strategy",
+        "Market share target",
+        "Revenue projection"
+      ]
+    },
+    {
+      "question": "How will LinguaAI ensure the accuracy and quality of its AI-driven conversations, especially in nuanced linguistic contexts?",
+      "category": "product",
+      "difficulty": "hard",
+      "key_points": [
+        "AI accuracy",
+        "Quality assurance",
+        "Improvement process"
+      ]
+    },
+    {
+      "question": "What is the current development status of LinguaAI, and when is the planned launch date?",
+      "category": "product",
+      "difficulty": "easy",
+      "key_points": [
+        "Development status",
+        "Launch timeline",
+        "Beta testing"
+      ]
+    },
+    {
+      "question": "How does LinguaAI plan to compete with established players like Duolingo and Babbel?",
+      "category": "competition",
+      "difficulty": "medium",
+      "key_points": [
+        "Competitive strategy",
+        "Differentiation",
+        "Pricing"
+      ]
+    },
+    {
+      "question": "What are the key metrics LinguaAI will use to measure user engagement and retention, and what are the initial targets?",
+      "category": "market",
+      "difficulty": "medium",
+      "key_points": [
+        "Engagement metrics",
+        "Retention targets",
+        "User activity"
+      ]
+    }
+  ]
+}
