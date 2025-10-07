@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { ArrowLeft, User, Mail, Building, MapPin, Calendar, Edit2, Save, Coins } from "lucide-react";
+import Navbar from "@/components/Navbar";
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -90,29 +91,8 @@ const Profile = () => {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md shadow-sm">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <button
-                onClick={() => navigate("/dashboard")}
-                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <h1 className="text-xl font-bold text-gray-900">Profile Settings</h1>
-            </div>
-            <button
-              onClick={() => navigate("/pricing")}
-              className="flex items-center space-x-2 px-4 py-2 rounded-full bg-pulse-100 hover:bg-pulse-200 transition-colors"
-            >
-              <Coins className="w-4 h-4 text-pulse-600" />
-              <span className="text-sm font-medium">Buy Credits</span>
-            </button>
-          </div>
-        </div>
-      </header>
+      {/* Navbar */}
+      <Navbar />
 
       {/* Main Content */}
       <main className="pt-24 pb-16 px-4 sm:px-6 lg:px-8">

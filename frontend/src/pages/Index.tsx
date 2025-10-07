@@ -56,6 +56,22 @@ const Index = () => {
         });
       });
     });
+
+    // Handle hash navigation from other pages
+    const hash = window.location.hash;
+    if (hash) {
+      setTimeout(() => {
+        const targetId = hash.substring(1);
+        const targetElement = document.getElementById(targetId);
+        if (targetElement) {
+          const offset = window.innerWidth < 768 ? 100 : 80;
+          window.scrollTo({
+            top: targetElement.offsetTop - offset,
+            behavior: 'smooth'
+          });
+        }
+      }, 100); // Small delay to ensure page is fully loaded
+    }
   }, []);
 
   return (

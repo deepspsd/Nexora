@@ -7,8 +7,8 @@ const loadStripe = async (key: string) => {
   return null;
 };
 
-// Initialize Stripe (mock)
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || 'pk_test_...');
+// Initialize Stripe (mock) - Using Vite env variables
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_...');
 
 interface PricingPlan {
   id: string;

@@ -262,6 +262,22 @@ async def health_check():
 # USER AUTHENTICATION ENDPOINTS
 # ============================================================================
 
+# Add routes without /api prefix for frontend compatibility
+@app.post("/auth/login")
+async def login_user_compat(request: UserLoginRequest):
+    """Login user - compatibility route"""
+    return await login_user(request)
+
+@app.post("/auth/register")
+async def register_user_compat(request: UserRegistrationRequest):
+    """Register user - compatibility route"""
+    return await register_user(request)
+
+@app.get("/auth/user/{user_id}")
+async def get_user_info_compat(user_id: str):
+    """Get user info - compatibility route"""
+    return await get_user_info(user_id)
+
 @app.post("/api/auth/register")
 async def register_user(request: UserRegistrationRequest):
     """Register a new user"""
@@ -308,30 +324,38 @@ async def login_user(request: UserLoginRequest):
         # Get user
         user = db.get_user_by_email(request.email)
         if not user:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            logger.warning(f"Login attempt for non-existent user: {request.email}")
+            raise HTTPException(status_code=401, detail="Invalid email or password")
         
         # Verify password
         password_hash = hashlib.sha256(request.password.encode()).hexdigest()
-        if user['password_hash'] != password_hash:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+        if user.get('password_hash') != password_hash:
+            logger.warning(f"Invalid password attempt for user: {request.email}")
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        # Store user info in response
+        user_data = {
+            "id": user['id'],
+            "email": user['email'],
+            "name": user['name'],
+            "credits": user.get('credits', 0),
+            "subscription_tier": user.get('subscription_tier', 'free')
+        }
+        
+        logger.info(f"User logged in successfully: {request.email}")
         
         return {
             "status": "success",
             "message": "Login successful",
-            "user": {
-                "id": user['id'],
-                "email": user['email'],
-                "name": user['name'],
-                "credits": user['credits'],
-                "subscription_tier": user['subscription_tier']
-            }
+            "user": user_data,
+            "token": "dummy-token-" + user['id']  # Add a simple token for now
         }
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error logging in: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error logging in: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An error occurred during login")
 
 
 @app.get("/api/user/{user_id}")
