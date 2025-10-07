@@ -25,9 +25,9 @@ DB_CONFIG = {
     'user': os.getenv('DB_USER'),
     'password': os.getenv('DB_PASSWORD'),
     'database': os.getenv('DB_NAME'),
-    'ssl_disabled': False,
-    'ssl_verify_cert': True,
-    'ssl_verify_identity': True,
+    'ssl_disabled': True,  # Disable SSL for local development
+    'ssl_verify_cert': False,
+    'ssl_verify_identity': False,
 }
 
 # Connection pool configuration
@@ -45,6 +45,11 @@ def initialize_pool():
     """Initialize the MySQL connection pool"""
     global connection_pool
     
+    # Check if database credentials are configured
+    if not DB_CONFIG.get('host') or not DB_CONFIG.get('user'):
+        logger.warning("Database credentials not configured. Running without database.")
+        return False
+    
     try:
         connection_pool = pooling.MySQLConnectionPool(
             **DB_CONFIG,
@@ -54,6 +59,7 @@ def initialize_pool():
         return True
     except Error as e:
         logger.error(f"Error initializing connection pool: {e}")
+        connection_pool = None
         return False
 
 
@@ -62,7 +68,11 @@ def get_connection():
     global connection_pool
     
     if connection_pool is None:
-        initialize_pool()
+        if not initialize_pool():
+            raise Error("Failed to initialize connection pool")
+    
+    if connection_pool is None:
+        raise Error("Connection pool is not available")
     
     try:
         connection = connection_pool.get_connection()
@@ -111,6 +121,12 @@ def execute_query(query: str, params: tuple = None, fetch_one: bool = False, fet
 
 def create_tables():
     """Create necessary database tables"""
+    global connection_pool
+    
+    # If pool is not initialized, skip table creation
+    if connection_pool is None:
+        logger.warning("Skipping table creation - database not available")
+        return False
     
     tables = {
         'users': """
@@ -222,6 +238,12 @@ def create_tables():
 
 def test_connection():
     """Test database connection"""
+    global connection_pool
+    
+    # If pool is not initialized, return False
+    if connection_pool is None:
+        return False
+    
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -233,7 +255,7 @@ def test_connection():
                 logger.info("Database connection test successful")
                 return True
             return False
-    except Error as e:
+    except Exception as e:
         logger.error(f"Database connection test failed: {e}")
         return False
 

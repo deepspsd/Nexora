@@ -1665,5 +1665,256 @@ async def main():
     print(f"\n{business_plan.executive_summary}")
 
 
+# ============================================================================
+# FASTAPI ROUTER AND ENDPOINTS
+# ============================================================================
+
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, Field
+from typing import Optional
+
+# Create router
+router = APIRouter(prefix="/api/business-plan", tags=["Business Planning"])
+
+# Initialize agent (singleton)
+agent = None
+
+def get_agent():
+    """Get or create agent instance"""
+    global agent
+    if agent is None:
+        agent = BusinessPlanningAgent()
+    return agent
+
+
+# ============================================================================
+# REQUEST/RESPONSE MODELS
+# ============================================================================
+
+class BusinessPlanRequest(BaseModel):
+    """Business plan creation request"""
+    idea: str = Field(..., description="Business idea description", min_length=10)
+    industry: Optional[str] = Field("", description="Industry/sector")
+    target_market: Optional[str] = Field("", description="Target market description")
+    business_model: Optional[str] = Field("", description="Business model type")
+    region: Optional[str] = Field("United States", description="Operating region")
+    budget: Optional[int] = Field(10000, description="Initial budget")
+    export_formats: Optional[List[str]] = Field(["pdf"], description="Export formats")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "idea": "AI-powered language learning app with conversation practice",
+                "industry": "EdTech",
+                "target_market": "Language learners aged 18-35",
+                "business_model": "Freemium subscription",
+                "region": "United States",
+                "budget": 15000,
+                "export_formats": ["pdf", "docx"]
+            }
+        }
+
+
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
+
+@router.post("/create")
+async def create_business_plan(request: BusinessPlanRequest):
+    """
+    Create comprehensive business plan
+    
+    Generates a complete business plan including:
+    - Lean Canvas (all 9 blocks)
+    - 3-year financial projections
+    - Team composition and hiring timeline
+    - Marketing strategy with budget allocation
+    - Regulatory compliance checklist
+    - Investor summary and funding requirements
+    - Exports to PDF/DOCX
+    """
+    try:
+        logger.info(f"Creating business plan for: {request.idea[:50]}...")
+        planning_agent = get_agent()
+        
+        if not planning_agent:
+            raise HTTPException(status_code=503, detail="Business Planning Agent not initialized")
+        
+        # Create business plan
+        business_plan: BusinessPlanResponse = await planning_agent.create_business_plan(
+            idea=request.idea,
+            industry=request.industry or "",
+            target_market=request.target_market or "",
+            business_model=request.business_model or "",
+            region=request.region or "United States",
+            budget=request.budget or 10000,
+            export_formats=request.export_formats or ["pdf"]
+        )
+        
+        logger.info(f"Business plan created successfully: {business_plan.plan_id}")
+        
+        # Format response
+        formatted_response = planning_agent.format_response(business_plan)
+        
+        return {
+            "status": "success",
+            "data": formatted_response
+        }
+    
+    except Exception as e:
+        logger.error(f"Error creating business plan: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Business plan creation failed: {str(e)}")
+
+
+@router.post("/lean-canvas")
+async def generate_lean_canvas(request: dict):
+    """Generate Lean Canvas only"""
+    try:
+        logger.info("Generating Lean Canvas...")
+        planning_agent = get_agent()
+        
+        idea = request.get("idea", "")
+        target_market = request.get("target_market", "")
+        business_model = request.get("business_model", "")
+        
+        lean_canvas = await planning_agent.generate_lean_canvas(
+            idea=idea,
+            target_market=target_market,
+            business_model=business_model
+        )
+        
+        logger.info("Lean Canvas generated successfully")
+        return {
+            "status": "success",
+            "data": asdict(lean_canvas)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error generating lean canvas: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Lean Canvas generation failed: {str(e)}")
+
+
+@router.post("/financials")
+async def estimate_financials(request: dict):
+    """Estimate financial projections"""
+    try:
+        logger.info("Estimating financials...")
+        planning_agent = get_agent()
+        
+        idea = request.get("idea", "")
+        business_model = request.get("business_model", "")
+        target_market_size = request.get("target_market_size", "")
+        
+        financials = await planning_agent.estimate_financials(
+            idea=idea,
+            business_model=business_model,
+            target_market_size=target_market_size
+        )
+        
+        logger.info("Financials estimated successfully")
+        return {
+            "status": "success",
+            "data": asdict(financials)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error estimating financials: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Financial estimation failed: {str(e)}")
+
+
+@router.post("/team")
+async def map_team_roles(request: dict):
+    """Map team roles and composition"""
+    try:
+        logger.info("Mapping team roles...")
+        planning_agent = get_agent()
+        
+        idea = request.get("idea", "")
+        business_model = request.get("business_model", "")
+        stage = request.get("stage", "pre-seed")
+        
+        team = await planning_agent.map_team_roles(
+            idea=idea,
+            business_model=business_model,
+            stage=stage
+        )
+        
+        logger.info("Team roles mapped successfully")
+        return {
+            "status": "success",
+            "data": asdict(team)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error mapping team roles: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Team mapping failed: {str(e)}")
+
+
+@router.post("/marketing")
+async def build_marketing_strategy(request: dict):
+    """Build marketing strategy"""
+    try:
+        logger.info("Building marketing strategy...")
+        planning_agent = get_agent()
+        
+        idea = request.get("idea", "")
+        target_audience = request.get("target_audience", "")
+        budget = request.get("budget", 10000)
+        
+        marketing = await planning_agent.build_marketing_strategy(
+            idea=idea,
+            target_audience=target_audience,
+            budget=budget
+        )
+        
+        logger.info("Marketing strategy built successfully")
+        return {
+            "status": "success",
+            "data": asdict(marketing)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error building marketing strategy: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Marketing strategy failed: {str(e)}")
+
+
+@router.post("/compliance")
+async def check_regulatory_compliance(request: dict):
+    """Check regulatory compliance"""
+    try:
+        logger.info("Checking regulatory compliance...")
+        planning_agent = get_agent()
+        
+        idea = request.get("idea", "")
+        industry = request.get("industry", "")
+        region = request.get("region", "United States")
+        
+        compliance = await planning_agent.check_regulatory_compliance(
+            idea=idea,
+            industry=industry,
+            region=region
+        )
+        
+        logger.info("Compliance check completed successfully")
+        return {
+            "status": "success",
+            "data": asdict(compliance)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error checking compliance: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Compliance check failed: {str(e)}")
+
+
+@router.get("/health")
+async def business_plan_health():
+    """Health check for Business Planning Agent"""
+    return {
+        "status": "ok",
+        "agent": "initialized" if agent else "not initialized",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 if __name__ == "__main__":
     asyncio.run(main())

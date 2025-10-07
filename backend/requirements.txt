@@ -49,5 +49,20 @@ python-docx==1.1.0
 # PPTX Generation for Pitch Deck Agent
 python-pptx==0.6.23
 
-# Groq API (already using openai package which is compatible)
+# MVP Builder Dependencies
+aiohttp==3.9.1  # Already included above
+requests==2.31.0  # Already included above
+
+# E2B Sandbox Integration
+# e2b==0.15.0  # E2B SDK (if needed for direct integration)
+
+# FireCrawl Integration (using requests/aiohttp)
+# firecrawl-py==0.0.8  # Optional: dedicated FireCrawl SDK
+
+# Additional AI Models
 # groq==0.4.1  # Optional: dedicated Groq SDK
+# anthropic==0.8.1  # Optional: Anthropic SDK
+
+# File Processing
+# zipfile and tempfile are built-in Python modules
+# Additional file processing utilities can be added here if needed

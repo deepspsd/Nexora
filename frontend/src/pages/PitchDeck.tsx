@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import Navbar from "@/components/Navbar";
 import { cn } from "@/lib/utils";
 import { 
   ArrowLeft, 
@@ -27,31 +29,103 @@ import {
   X,
   Upload,
   Mic,
-  Video
+  Video,
+  MessageCircle,
+  Settings,
+  Wand2,
+  ChevronRight,
+  CheckCircle,
+  Clock,
+  Zap,
+  Brain,
+  Volume2,
+  VolumeX,
+  Edit3,
+  Save,
+  RefreshCw
 } from "lucide-react";
+
+// Types and Interfaces
+interface SlideContent {
+  slide_number: number;
+  title: string;
+  content: string[];
+  notes: string;
+  chart_data?: any;
+  chart_type?: string;
+}
+
+interface DesignTheme {
+  name: string;
+  primary_color: string;
+  secondary_color: string;
+  accent_color: string;
+  background_color: string;
+  text_color: string;
+  font_family: string;
+  style_description: string;
+}
+
+interface VoiceoverNarration {
+  slide_number: number;
+  text: string;
+  audio_url?: string;
+  duration_seconds: number;
+}
+
+interface DemoScript {
+  full_script: string;
+  slide_scripts: any[];
+  total_duration_minutes: number;
+  pacing_cues: string[];
+  emphasis_points: string[];
+}
+
+interface InvestorQuestion {
+  question: string;
+  category: string;
+  difficulty: string;
+  suggested_answer: string;
+  key_points: string[];
+}
+
+interface PitchDeckData {
+  deck_id: string;
+  business_name: string;
+  tagline: string;
+  slides: SlideContent[];
+  design_theme: DesignTheme;
+  voiceovers: VoiceoverNarration[];
+  demo_script: DemoScript;
+  investor_qa: InvestorQuestion[];
+  pptx_url?: string;
+  video_url?: string;
+}
 
 const PitchDeck = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  
+  // Form State
   const [formData, setFormData] = useState({
-    companyName: "",
-    problemStatement: "",
-    solution: "",
-    teamDetails: [] as { name: string; role: string; bio: string }[],
-    marketData: {} as any,
-    logo: "",
-    stylePreference: "modern",
-    brandColors: [] as string[],
-    numSlides: 10
+    businessIdea: "",
+    businessName: "",
+    targetMarket: "",
+    fundingAsk: 100000
   });
-  const [teamMemberInput, setTeamMemberInput] = useState({ name: "", role: "", bio: "" });
-  const [colorInput, setColorInput] = useState("#3B82F6");
+
+  // App State
+  const [currentModule, setCurrentModule] = useState("generator");
+  const [pitchDeckData, setPitchDeckData] = useState<PitchDeckData | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [pitchDeck, setPitchDeck] = useState<any>(null);
   const [userCredits, setUserCredits] = useState(20);
   const [currentSlide, setCurrentSlide] = useState(0);
   const [isPresenting, setIsPresenting] = useState(false);
-  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [selectedTheme, setSelectedTheme] = useState<DesignTheme | null>(null);
+  const [voiceoverEnabled, setVoiceoverEnabled] = useState(false);
+  const [demoScript, setDemoScript] = useState<DemoScript | null>(null);
+  const [investorQA, setInvestorQA] = useState<InvestorQuestion[]>([]);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   useEffect(() => {
     const credits = localStorage.getItem('userCredits');
@@ -60,99 +134,187 @@ const PitchDeck = () => {
     }
 
     // Pre-fill from previous steps if available
-    if (location.state?.marketData) {
-      setFormData(prev => ({ ...prev, marketData: location.state.marketData }));
+    if (location.state?.businessData) {
+      setFormData(prev => ({ ...prev, ...location.state.businessData }));
     }
   }, [location.state]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (userCredits < 3) {
-      alert('Insufficient credits. You need at least 3 credits to generate a pitch deck.');
+  // Module 1: Auto Slide Generator
+  const generateSlides = async () => {
+    if (!formData.businessIdea || !formData.businessName) {
+      alert('Please fill in business idea and name.');
       return;
     }
 
-    if (!formData.companyName || !formData.problemStatement || !formData.solution) {
-      alert('Please fill in all required fields.');
+    if (userCredits < 3) {
+      alert('Insufficient credits. You need at least 3 credits to generate slides.');
       return;
     }
 
     setIsGenerating(true);
 
     try {
-      const response = await fetch('http://localhost:8000/api/pitch-deck', {
+      const response = await fetch('http://localhost:8000/api/pitch-deck/create', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
         body: JSON.stringify({
-          companyName: formData.companyName,
-          problemStatement: formData.problemStatement,
-          solution: formData.solution,
-          teamDetails: formData.teamDetails,
-          marketData: formData.marketData,
-          logo: formData.logo,
-          stylePreference: formData.stylePreference,
-          brandColors: formData.brandColors,
-          numSlides: formData.numSlides,
+          business_idea: formData.businessIdea,
+          business_name: formData.businessName,
+          target_market: formData.targetMarket,
+          funding_ask: formData.fundingAsk,
           userId: localStorage.getItem('userId')
         }),
       });
 
+      if (!response.ok) {
+        throw new Error('Failed to generate slides');
+      }
+
       const data = await response.json();
-      setPitchDeck(data.data);
+      setPitchDeckData(data.data);
       
       // Update credits
       const newCredits = userCredits - 3;
       setUserCredits(newCredits);
       localStorage.setItem('userCredits', newCredits.toString());
       
-      setIsGenerating(false);
     } catch (error) {
-      console.error('Error generating pitch deck:', error);
-      alert('Error generating pitch deck. Please try again.');
+      console.error('Error generating slides:', error);
+      alert('Error generating slides. Please try again.');
+    } finally {
       setIsGenerating(false);
     }
   };
 
-  const addTeamMember = () => {
-    if (teamMemberInput.name && teamMemberInput.role && formData.teamDetails.length < 6) {
-      setFormData(prev => ({
-        ...prev,
-        teamDetails: [...prev.teamDetails, { ...teamMemberInput }]
-      }));
-      setTeamMemberInput({ name: '', role: '', bio: '' });
+  // Module 2: Voiceover Narration
+  const generateVoiceovers = async () => {
+    if (!pitchDeckData) return;
+
+    try {
+      const response = await fetch('http://localhost:8000/api/pitch-deck/voiceover', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          deck_id: pitchDeckData.deck_id,
+          slides: pitchDeckData.slides
+        }),
+      });
+
+      const data = await response.json();
+      setPitchDeckData(prev => prev ? { ...prev, voiceovers: data.voiceovers } : null);
+      setVoiceoverEnabled(true);
+    } catch (error) {
+      console.error('Error generating voiceovers:', error);
     }
   };
 
-  const removeTeamMember = (index: number) => {
-    setFormData(prev => ({
-      ...prev,
-      teamDetails: prev.teamDetails.filter((_, i) => i !== index)
-    }));
-  };
+  // Module 3: AI Design Theme Selector
+  const selectDesignTheme = async (themeName: string) => {
+    if (!pitchDeckData) return;
 
-  const addBrandColor = () => {
-    if (colorInput && formData.brandColors.length < 5) {
-      setFormData(prev => ({
-        ...prev,
-        brandColors: [...prev.brandColors, colorInput]
-      }));
-      setColorInput('#3B82F6');
+    try {
+      const response = await fetch('http://localhost:8000/api/pitch-deck/design-theme', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          deck_id: pitchDeckData.deck_id,
+          theme_name: themeName,
+          business_type: formData.targetMarket
+        }),
+      });
+
+      const data = await response.json();
+      setSelectedTheme(data.theme);
+      setPitchDeckData(prev => prev ? { ...prev, design_theme: data.theme } : null);
+    } catch (error) {
+      console.error('Error selecting theme:', error);
     }
   };
 
-  const removeBrandColor = (index: number) => {
-    setFormData(prev => ({
-      ...prev,
-      brandColors: prev.brandColors.filter((_, i) => i !== index)
-    }));
+  // Module 4: Demo Script Writer
+  const generateDemoScript = async () => {
+    if (!pitchDeckData) return;
+
+    try {
+      const response = await fetch('http://localhost:8000/api/pitch-deck/demo-script', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          deck_id: pitchDeckData.deck_id,
+          slides: pitchDeckData.slides,
+          target_duration: 10 // 10 minutes
+        }),
+      });
+
+      const data = await response.json();
+      setDemoScript(data.demo_script);
+    } catch (error) {
+      console.error('Error generating demo script:', error);
+    }
   };
 
+  // Module 5: Investor Q&A Simulator
+  const generateInvestorQA = async () => {
+    if (!pitchDeckData) return;
+
+    try {
+      const response = await fetch('http://localhost:8000/api/pitch-deck/investor-qa', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          deck_id: pitchDeckData.deck_id,
+          business_idea: formData.businessIdea,
+          target_market: formData.targetMarket,
+          num_questions: 15
+        }),
+      });
+
+      const data = await response.json();
+      setInvestorQA(data.questions);
+    } catch (error) {
+      console.error('Error generating Q&A:', error);
+    }
+  };
+
+  // Module 6: PPTX Export
+  const exportToPPTX = async () => {
+    if (!pitchDeckData) return;
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/pitch-deck/export/${pitchDeckData.deck_id}/pptx`);
+      const blob = await response.blob();
+      
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${formData.businessName}_pitch_deck.pptx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('Error exporting PPTX:', error);
+    }
+  };
+
+  // Navigation helpers
   const nextSlide = () => {
-    if (pitchDeck?.slides && currentSlide < pitchDeck.slides.length - 1) {
+    if (pitchDeckData && currentSlide < pitchDeckData.slides.length - 1) {
       setCurrentSlide(currentSlide + 1);
     }
   };
@@ -163,439 +325,641 @@ const PitchDeck = () => {
     }
   };
 
-  const exportAsPDF = () => {
-    console.log('Exporting as PDF...');
-  };
-
-  const exportAsPPTX = () => {
-    console.log('Exporting as PPTX...');
-  };
-
-  const startPresentation = () => {
-    setIsPresenting(true);
-    setCurrentSlide(0);
-  };
-
-  const mockSlides = [
-    {
-      title: formData.companyName || 'Your Company',
-      subtitle: 'Revolutionizing the Future',
-      type: 'title',
-      content: 'Welcome to our pitch presentation'
-    },
-    {
-      title: 'Problem',
-      type: 'content',
-      content: formData.problemStatement || 'The problem we are solving...'
-    },
-    {
-      title: 'Solution',
-      type: 'content', 
-      content: formData.solution || 'Our innovative solution...'
-    },
-    {
-      title: 'Market Opportunity',
-      type: 'chart',
-      content: 'TAM: $100B, SAM: $10B, SOM: $1B'
-    },
-    {
-      title: 'Team',
-      type: 'team',
-      content: formData.teamDetails.length > 0 ? formData.teamDetails : [{ name: 'Founder', role: 'CEO', bio: 'Experienced leader' }]
-    }
+  // Design themes
+  const designThemes = [
+    { name: "Modern Tech", color: "from-blue-500 to-purple-600" },
+    { name: "Corporate", color: "from-gray-600 to-blue-800" },
+    { name: "Creative", color: "from-pink-500 to-orange-500" },
+    { name: "Minimal", color: "from-gray-400 to-gray-600" },
+    { name: "Bold", color: "from-red-500 to-yellow-500" }
   ];
 
-  const slides = [
-    { title: "Problem", icon: "🎯" },
-    { title: "Solution", icon: "💡" },
-    { title: "Market Size", icon: "📊" },
-    { title: "Business Model", icon: "💰" },
-    { title: "Traction", icon: "📈" },
-    { title: "Team", icon: "👥" },
-    { title: "Financials", icon: "💵" },
-    { title: "Ask", icon: "🚀" }
+  // Module navigation
+  const modules = [
+    { id: "generator", name: "Slide Generator", icon: Presentation, description: "Generate 12 professional slides" },
+    { id: "themes", name: "Design Themes", icon: Palette, description: "AI-powered theme selection" },
+    { id: "voiceover", name: "Voiceover", icon: Mic, description: "Add AI narration" },
+    { id: "charts", name: "Charts", icon: BarChart3, description: "Auto-generate charts" },
+    { id: "script", name: "Demo Script", icon: FileText, description: "Presentation script" },
+    { id: "qa", name: "Investor Q&A", icon: MessageCircle, description: "Practice questions" },
+    { id: "export", name: "Export", icon: Download, description: "Download as PPTX" }
   ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-red-50">
+      <Navbar />
+      
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md shadow-sm">
+      <header className="fixed top-16 left-0 right-0 z-40 bg-white/80 backdrop-blur-md shadow-sm">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={() => navigate("/dashboard")}
-              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg">
-                <Presentation className="w-5 h-5 text-white" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => navigate("/dashboard")}
+                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg">
+                  <Presentation className="w-5 h-5 text-white" />
+                </div>
+                <h1 className="text-xl font-bold text-gray-900">AI Pitch Deck Studio</h1>
               </div>
-              <h1 className="text-xl font-bold text-gray-900">Pitch Deck Generator</h1>
             </div>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="text-sm text-gray-600">Credits:</span>
-            <span className="text-lg font-bold text-orange-600">{userCredits}</span>
+            <div className="flex items-center space-x-4">
+              <span className="text-sm text-gray-600">Credits:</span>
+              <span className="text-lg font-bold text-orange-600">{userCredits}</span>
+            </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="pt-24 pb-16 px-4 sm:px-6 lg:px-8">
-        <div className="container mx-auto max-w-6xl">
-          {/* Hero Section */}
-          <div className="text-center mb-12">
-            <div className="inline-flex p-3 rounded-full bg-gradient-to-r from-orange-500 to-red-500 mb-4">
-              <Presentation className="w-8 h-8 text-white" />
+      <main className="pt-32 pb-16 px-4 sm:px-6 lg:px-8">
+        <div className="container mx-auto max-w-7xl">
+          
+          {/* Module Navigation */}
+          <div className="mb-8">
+            <div className="flex flex-wrap gap-2 bg-white rounded-xl p-2 shadow-sm">
+              {modules.map((module) => {
+                const Icon = module.icon;
+                return (
+                  <button
+                    key={module.id}
+                    onClick={() => setCurrentModule(module.id)}
+                    className={cn(
+                      "flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-all",
+                      currentModule === module.id
+                        ? "bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-md"
+                        : "text-gray-600 hover:bg-gray-100"
+                    )}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span className="hidden sm:inline">{module.name}</span>
+                  </button>
+                );
+              })}
             </div>
-            <h2 className="text-4xl md:text-5xl font-display font-bold text-gray-900 mb-4">
-              Create Your <span className="bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">Pitch Deck</span>
-            </h2>
-            <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              AI-powered pitch decks with custom branding, team profiles, and export options
-            </p>
           </div>
 
-          {/* Features */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
-            {[
-              { icon: Sparkles, text: "AI-Powered" },
-              { icon: Palette, text: "Custom Branding" },
-              { icon: Users, text: "Team Profiles" },
-              { icon: Download, text: "Export Options" }
-            ].map((feature, idx) => (
-              <div key={idx} className="flex items-center space-x-3 p-4 bg-gradient-to-br from-orange-50 to-red-50 rounded-xl">
-                <feature.icon className="w-5 h-5 text-orange-600" />
-                <span className="text-sm font-medium text-gray-700">{feature.text}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Form */}
-            <div className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200">
-              <h3 className="text-2xl font-bold text-gray-900 mb-6">Company Information</h3>
-              <form onSubmit={handleSubmit} className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Company Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.companyName}
-                    onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    placeholder="Your Company Name"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Problem Statement <span className="text-red-500">*</span>
-                  </label>
-                  <textarea
-                    required
-                    value={formData.problemStatement}
-                    onChange={(e) => setFormData({ ...formData, problemStatement: e.target.value })}
-                    rows={3}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    placeholder="What problem are you solving?"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Solution <span className="text-red-500">*</span>
-                  </label>
-                  <textarea
-                    required
-                    value={formData.solution}
-                    onChange={(e) => setFormData({ ...formData, solution: e.target.value })}
-                    rows={3}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    placeholder="How does your product solve this problem?"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Team Members
-                  </label>
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          {/* Module Content */}
+          <AnimatePresence mode="wait">
+            {currentModule === "generator" && (
+              <motion.div
+                key="generator"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="grid grid-cols-1 lg:grid-cols-2 gap-8"
+              >
+                {/* Input Form */}
+                <div className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200">
+                  <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+                    <Sparkles className="w-6 h-6 text-orange-500 mr-2" />
+                    Business Information
+                  </h3>
+                  
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Business Name <span className="text-red-500">*</span>
+                      </label>
                       <input
                         type="text"
-                        value={teamMemberInput.name}
-                        onChange={(e) => setTeamMemberInput({ ...teamMemberInput, name: e.target.value })}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        placeholder="Name"
+                        required
+                        value={formData.businessName}
+                        onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        placeholder="Your Company Name"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Business Idea <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        required
+                        value={formData.businessIdea}
+                        onChange={(e) => setFormData({ ...formData, businessIdea: e.target.value })}
+                        rows={4}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        placeholder="Describe your business idea, problem you're solving, and solution..."
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Target Market
+                      </label>
                       <input
                         type="text"
-                        value={teamMemberInput.role}
-                        onChange={(e) => setTeamMemberInput({ ...teamMemberInput, role: e.target.value })}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        placeholder="Role"
+                        value={formData.targetMarket}
+                        onChange={(e) => setFormData({ ...formData, targetMarket: e.target.value })}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        placeholder="e.g., Small Businesses, Millennials, Healthcare"
                       />
-                      <button
-                        type="button"
-                        onClick={addTeamMember}
-                        className="px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 flex items-center justify-center"
-                      >
-                        <Plus className="w-4 h-4" />
-                      </button>
                     </div>
-                    <input
-                      type="text"
-                      value={teamMemberInput.bio}
-                      onChange={(e) => setTeamMemberInput({ ...teamMemberInput, bio: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                      placeholder="Brief bio (optional)"
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      {formData.teamDetails.map((member, index) => (
-                        <span key={index} className="inline-flex items-center px-3 py-1 bg-orange-50 rounded-full text-sm text-orange-700">
-                          {member.name} - {member.role}
-                          <button
-                            type="button"
-                            onClick={() => removeTeamMember(index)}
-                            className="ml-2 text-orange-500 hover:text-red-500"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Brand Colors
-                  </label>
-                  <div className="flex gap-2 mb-2">
-                    <input
-                      type="color"
-                      value={colorInput}
-                      onChange={(e) => setColorInput(e.target.value)}
-                      className="w-12 h-10 border border-gray-300 rounded-lg cursor-pointer"
-                    />
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Funding Ask (USD)
+                      </label>
+                      <input
+                        type="number"
+                        value={formData.fundingAsk}
+                        onChange={(e) => setFormData({ ...formData, fundingAsk: parseInt(e.target.value) })}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        placeholder="100000"
+                      />
+                    </div>
+
                     <button
-                      type="button"
-                      onClick={addBrandColor}
-                      className="px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200"
+                      onClick={generateSlides}
+                      disabled={isGenerating || userCredits < 3}
+                      className={cn(
+                        "w-full py-4 rounded-full font-medium text-white transition-all duration-300",
+                        "bg-gradient-to-r from-orange-500 to-red-500 hover:shadow-lg",
+                        "disabled:opacity-50 disabled:cursor-not-allowed",
+                        "flex items-center justify-center space-x-2"
+                      )}
                     >
-                      Add Color
+                      {isGenerating ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          <span>Generating Slides...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Wand2 className="w-5 h-5" />
+                          <span>Generate 12 Slides (3 Credits)</span>
+                        </>
+                      )}
                     </button>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {formData.brandColors.map((color, index) => (
-                      <div key={index} className="flex items-center space-x-1">
-                        <div className="w-6 h-6 rounded-full border" style={{ backgroundColor: color }}></div>
-                        <button
-                          type="button"
-                          onClick={() => removeBrandColor(index)}
-                          className="text-red-500 hover:text-red-700"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
+                </div>
+
+                {/* Preview/Results */}
+                <div className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200">
+                  {!pitchDeckData ? (
+                    <div className="text-center py-12">
+                      <div className="inline-flex p-4 rounded-full bg-gradient-to-r from-orange-100 to-red-100 mb-4">
+                        <Presentation className="w-8 h-8 text-orange-600" />
                       </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Style Preference
-                  </label>
-                  <select
-                    value={formData.stylePreference}
-                    onChange={(e) => setFormData({ ...formData, stylePreference: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  >
-                    <option value="modern">Modern & Clean</option>
-                    <option value="corporate">Corporate & Professional</option>
-                    <option value="creative">Creative & Bold</option>
-                    <option value="minimal">Minimal & Simple</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Number of Slides
-                  </label>
-                  <select
-                    value={formData.numSlides}
-                    onChange={(e) => setFormData({ ...formData, numSlides: parseInt(e.target.value) })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                  >
-                    <option value={8}>8 Slides (Essential)</option>
-                    <option value={10}>10 Slides (Standard)</option>
-                    <option value={12}>12 Slides (Detailed)</option>
-                    <option value={15}>15 Slides (Comprehensive)</option>
-                  </select>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isGenerating || userCredits < 3}
-                  className={cn(
-                    "w-full py-4 rounded-full font-medium text-white transition-all duration-300",
-                    "bg-gradient-to-r from-orange-500 to-red-500 hover:shadow-lg",
-                    "disabled:opacity-50 disabled:cursor-not-allowed",
-                    "flex items-center justify-center space-x-2"
-                  )}
-                >
-                  {isGenerating ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>Generating Pitch Deck...</span>
-                    </>
+                      <h3 className="text-xl font-bold text-gray-900 mb-2">AI-Powered Pitch Deck</h3>
+                      <p className="text-gray-600 mb-6">Generate professional slides automatically</p>
+                      
+                      <div className="grid grid-cols-2 gap-4 text-left">
+                        {[
+                          "Title & Company Overview",
+                          "Problem Statement", 
+                          "Solution & Product",
+                          "Market Opportunity",
+                          "Business Model",
+                          "Traction & Metrics",
+                          "Competition Analysis", 
+                          "Team & Advisors",
+                          "Financial Projections",
+                          "Funding Ask & Use",
+                          "Vision & Roadmap",
+                          "Call to Action"
+                        ].map((slide, index) => (
+                          <div key={index} className="bg-gradient-to-br from-orange-50 to-red-50 rounded-lg p-3 border border-orange-200">
+                            <div className="text-sm font-medium text-orange-700 mb-1">{index + 1}. {slide}</div>
+                            <div className="h-8 bg-white rounded border border-orange-200 flex items-center justify-center">
+                              <span className="text-xs text-gray-500">Slide {index + 1}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   ) : (
-                    <>
-                      <Presentation className="w-5 h-5" />
-                      <span>Generate Pitch Deck (3 Credits)</span>
-                    </>
-                  )}
-                </button>
-              </form>
-            </div>
-
-            {/* Preview/Results */}
-            <div className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200">
-              {!pitchDeck ? (
-                <div className="text-center py-12">
-                  <div className="inline-flex p-4 rounded-full bg-gradient-to-r from-orange-100 to-red-100 mb-4">
-                    <Presentation className="w-8 h-8 text-orange-600" />
-                  </div>
-                  <h3 className="text-xl font-bold text-gray-900 mb-2">Preview Your Pitch Deck</h3>
-                  <p className="text-gray-600 mb-6">Fill out the form to generate your professional pitch deck</p>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    {mockSlides.slice(0, 4).map((slide, index) => (
-                      <div key={index} className="bg-gradient-to-br from-orange-50 to-red-50 rounded-lg p-4 border border-orange-200">
-                        <div className="text-sm font-medium text-orange-700 mb-2">{slide.title}</div>
-                        <div className="h-16 bg-white rounded border border-orange-200 flex items-center justify-center">
-                          <span className="text-xs text-gray-500">Slide {index + 1}</span>
+                    <div>
+                      <div className="flex items-center justify-between mb-6">
+                        <h3 className="text-2xl font-bold text-gray-900">Generated Slides</h3>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => setIsPresenting(true)}
+                            className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center space-x-2"
+                          >
+                            <Play className="w-4 h-4" />
+                            <span>Present</span>
+                          </button>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-2xl font-bold text-gray-900">Your Pitch Deck</h3>
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={startPresentation}
-                        className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center space-x-2"
-                      >
-                        <Play className="w-4 h-4" />
-                        <span>Present</span>
-                      </button>
-                      <div className="relative">
+
+                      {/* Slide Navigation */}
+                      <div className="flex items-center justify-between mb-4">
                         <button
-                          onClick={() => setShowExportMenu(!showExportMenu)}
-                          className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 flex items-center space-x-2"
+                          onClick={prevSlide}
+                          disabled={currentSlide === 0}
+                          className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          <Download className="w-4 h-4" />
-                          <span>Export</span>
+                          <SkipBack className="w-4 h-4" />
                         </button>
-                        {showExportMenu && (
-                          <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
-                            <button
-                              onClick={exportAsPDF}
-                              className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center space-x-2"
-                            >
-                              <FileText className="w-4 h-4" />
-                              <span>Export as PDF</span>
-                            </button>
-                            <button
-                              onClick={exportAsPPTX}
-                              className="w-full px-4 py-2 text-left hover:bg-gray-50 flex items-center space-x-2"
-                            >
-                              <Presentation className="w-4 h-4" />
-                              <span>Export as PPTX</span>
-                            </button>
-                          </div>
-                        )}
+                        <span className="text-sm text-gray-600">
+                          Slide {currentSlide + 1} of {pitchDeckData.slides.length}
+                        </span>
+                        <button
+                          onClick={nextSlide}
+                          disabled={currentSlide === pitchDeckData.slides.length - 1}
+                          className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <SkipForward className="w-4 h-4" />
+                        </button>
                       </div>
-                    </div>
-                  </div>
 
-                  {/* Slide Navigation */}
-                  <div className="flex items-center justify-between mb-4">
-                    <button
-                      onClick={prevSlide}
-                      disabled={currentSlide === 0}
-                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <SkipBack className="w-4 h-4" />
-                    </button>
-                    <span className="text-sm text-gray-600">
-                      Slide {currentSlide + 1} of {mockSlides.length}
-                    </span>
-                    <button
-                      onClick={nextSlide}
-                      disabled={currentSlide === mockSlides.length - 1}
-                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <SkipForward className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {/* Current Slide */}
-                  <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-lg p-8 border border-orange-200 min-h-[300px]">
-                    <div className="text-center">
-                      <h4 className="text-2xl font-bold text-gray-900 mb-4">{mockSlides[currentSlide]?.title}</h4>
-                      {mockSlides[currentSlide]?.subtitle && (
-                        <p className="text-lg text-gray-600 mb-6">{mockSlides[currentSlide].subtitle}</p>
-                      )}
-                      <div className="text-gray-700">
-                        {typeof mockSlides[currentSlide]?.content === 'string' ? (
-                          <p>{mockSlides[currentSlide].content}</p>
-                        ) : Array.isArray(mockSlides[currentSlide]?.content) ? (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {(mockSlides[currentSlide].content as any[]).map((member: any, index: number) => (
-                              <div key={index} className="bg-white rounded-lg p-4 text-left">
-                                <h5 className="font-bold text-gray-900">{member.name}</h5>
-                                <p className="text-orange-600 text-sm">{member.role}</p>
-                                {member.bio && <p className="text-gray-600 text-sm mt-2">{member.bio}</p>}
-                              </div>
+                      {/* Current Slide */}
+                      <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-lg p-8 border border-orange-200 min-h-[300px]">
+                        <div className="text-center">
+                          <h4 className="text-2xl font-bold text-gray-900 mb-4">
+                            {pitchDeckData.slides[currentSlide]?.title}
+                          </h4>
+                          <div className="text-gray-700 space-y-2">
+                            {pitchDeckData.slides[currentSlide]?.content.map((item, index) => (
+                              <p key={index} className="text-left">• {item}</p>
                             ))}
                           </div>
-                        ) : (
-                          <p>{mockSlides[currentSlide]?.content}</p>
-                        )}
+                        </div>
+                      </div>
+
+                      {/* Slide Thumbnails */}
+                      <div className="flex space-x-2 mt-4 overflow-x-auto">
+                        {pitchDeckData.slides.map((slide, index) => (
+                          <button
+                            key={index}
+                            onClick={() => setCurrentSlide(index)}
+                            className={cn(
+                              "flex-shrink-0 w-20 h-12 rounded border-2 flex items-center justify-center text-xs",
+                              currentSlide === index
+                                ? "border-orange-500 bg-orange-50"
+                                : "border-gray-200 bg-white hover:border-gray-300"
+                            )}
+                          >
+                            {index + 1}
+                          </button>
+                        ))}
                       </div>
                     </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Other modules would be implemented similarly */}
+            {currentModule === "themes" && pitchDeckData && (
+              <motion.div
+                key="themes"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200"
+              >
+                <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+                  <Palette className="w-6 h-6 text-orange-500 mr-2" />
+                  Design Themes
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                  {designThemes.map((theme, index) => (
+                    <button
+                      key={index}
+                      onClick={() => selectDesignTheme(theme.name)}
+                      className={cn(
+                        "p-6 rounded-xl border-2 transition-all",
+                        selectedTheme?.name === theme.name
+                          ? "border-orange-500 bg-orange-50"
+                          : "border-gray-200 hover:border-gray-300"
+                      )}
+                    >
+                      <div className={`w-full h-20 rounded-lg bg-gradient-to-r ${theme.color} mb-3`}></div>
+                      <p className="font-medium text-gray-900">{theme.name}</p>
+                    </button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Voiceover Module */}
+            {currentModule === "voiceover" && pitchDeckData && (
+              <motion.div
+                key="voiceover"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200"
+              >
+                <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+                  <Mic className="w-6 h-6 text-orange-500 mr-2" />
+                  AI Voiceover Narration
+                </h3>
+                
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div>
+                      <h4 className="font-semibold text-gray-900">Generate Voiceovers</h4>
+                      <p className="text-sm text-gray-600">Add AI narration to all slides using ElevenLabs</p>
+                    </div>
+                    <button
+                      onClick={generateVoiceovers}
+                      className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center space-x-2"
+                    >
+                      <Volume2 className="w-4 h-4" />
+                      <span>Generate</span>
+                    </button>
                   </div>
 
-                  {/* Slide Thumbnails */}
-                  <div className="flex space-x-2 mt-4 overflow-x-auto">
-                    {mockSlides.map((slide, index) => (
-                      <button
-                        key={index}
-                        onClick={() => setCurrentSlide(index)}
-                        className={cn(
-                          "flex-shrink-0 w-20 h-12 rounded border-2 flex items-center justify-center text-xs",
-                          currentSlide === index
-                            ? "border-orange-500 bg-orange-50"
-                            : "border-gray-200 bg-white hover:border-gray-300"
-                        )}
-                      >
-                        {index + 1}
+                  {pitchDeckData.voiceovers && pitchDeckData.voiceovers.length > 0 && (
+                    <div className="space-y-4">
+                      <h4 className="font-semibold text-gray-900">Generated Voiceovers</h4>
+                      {pitchDeckData.voiceovers.map((voiceover, index) => (
+                        <div key={index} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+                          <div className="flex-1">
+                            <h5 className="font-medium text-gray-900">Slide {voiceover.slide_number}</h5>
+                            <p className="text-sm text-gray-600 mt-1">{voiceover.text.substring(0, 100)}...</p>
+                            <span className="text-xs text-gray-500">{voiceover.duration_seconds}s</span>
+                          </div>
+                          <button
+                            onClick={() => setIsPlayingAudio(!isPlayingAudio)}
+                            className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200"
+                          >
+                            {isPlayingAudio ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Charts Module */}
+            {currentModule === "charts" && pitchDeckData && (
+              <motion.div
+                key="charts"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200"
+              >
+                <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+                  <BarChart3 className="w-6 h-6 text-orange-500 mr-2" />
+                  Chart Auto-Builder
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {[
+                    { name: "Market Size", type: "bar", description: "TAM, SAM, SOM visualization" },
+                    { name: "Revenue Growth", type: "line", description: "5-year revenue projections" },
+                    { name: "Market Share", type: "pie", description: "Competitive positioning" },
+                    { name: "User Acquisition", type: "area", description: "Customer growth metrics" },
+                    { name: "Unit Economics", type: "bar", description: "LTV, CAC, and margins" },
+                    { name: "Funding Timeline", type: "line", description: "Fundraising milestones" }
+                  ].map((chart, index) => (
+                    <div key={index} className="p-4 border border-gray-200 rounded-lg hover:border-orange-300 transition-colors">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-semibold text-gray-900">{chart.name}</h4>
+                        <BarChart3 className="w-5 h-5 text-orange-500" />
+                      </div>
+                      <p className="text-sm text-gray-600 mb-4">{chart.description}</p>
+                      <div className="h-24 bg-gradient-to-r from-orange-100 to-red-100 rounded border border-orange-200 flex items-center justify-center">
+                        <span className="text-xs text-gray-500">Chart Preview</span>
+                      </div>
+                      <button className="w-full mt-3 px-3 py-2 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 text-sm">
+                        Add to Slide
                       </button>
-                    ))}
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Demo Script Module */}
+            {currentModule === "script" && pitchDeckData && (
+              <motion.div
+                key="script"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200"
+              >
+                <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+                  <FileText className="w-6 h-6 text-orange-500 mr-2" />
+                  Demo Day Script Writer
+                </h3>
+                
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div>
+                      <h4 className="font-semibold text-gray-900">Generate Presentation Script</h4>
+                      <p className="text-sm text-gray-600">AI-powered script for demo day presentation</p>
+                    </div>
+                    <button
+                      onClick={generateDemoScript}
+                      className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center space-x-2"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                      <span>Generate Script</span>
+                    </button>
+                  </div>
+
+                  {demoScript && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-semibold text-gray-900">Generated Script</h4>
+                        <div className="flex items-center space-x-2 text-sm text-gray-600">
+                          <Clock className="w-4 h-4" />
+                          <span>{demoScript.total_duration_minutes} minutes</span>
+                        </div>
+                      </div>
+                      
+                      <div className="p-4 bg-gray-50 rounded-lg max-h-96 overflow-y-auto">
+                        <pre className="whitespace-pre-wrap text-sm text-gray-700">{demoScript.full_script}</pre>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <h5 className="font-medium text-gray-900 mb-2">Pacing Cues</h5>
+                          <ul className="space-y-1">
+                            {demoScript.pacing_cues.map((cue, index) => (
+                              <li key={index} className="text-sm text-gray-600 flex items-center">
+                                <Zap className="w-3 h-3 text-orange-500 mr-2" />
+                                {cue}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <h5 className="font-medium text-gray-900 mb-2">Emphasis Points</h5>
+                          <ul className="space-y-1">
+                            {demoScript.emphasis_points.map((point, index) => (
+                              <li key={index} className="text-sm text-gray-600 flex items-center">
+                                <Target className="w-3 h-3 text-red-500 mr-2" />
+                                {point}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Investor Q&A Module */}
+            {currentModule === "qa" && pitchDeckData && (
+              <motion.div
+                key="qa"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200"
+              >
+                <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+                  <MessageCircle className="w-6 h-6 text-orange-500 mr-2" />
+                  Investor Q&A Simulator
+                </h3>
+                
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div>
+                      <h4 className="font-semibold text-gray-900">Generate Practice Questions</h4>
+                      <p className="text-sm text-gray-600">AI-generated investor questions with suggested answers</p>
+                    </div>
+                    <button
+                      onClick={generateInvestorQA}
+                      className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center space-x-2"
+                    >
+                      <Brain className="w-4 h-4" />
+                      <span>Generate Q&A</span>
+                    </button>
+                  </div>
+
+                  {investorQA.length > 0 && (
+                    <div className="space-y-4">
+                      <h4 className="font-semibold text-gray-900">Practice Questions ({investorQA.length})</h4>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                        {["financial", "market", "team", "product", "competition"].map((category) => (
+                          <div key={category} className="text-center p-3 bg-gray-50 rounded-lg">
+                            <div className="text-lg font-bold text-orange-600">
+                              {investorQA.filter(q => q.category === category).length}
+                            </div>
+                            <div className="text-sm text-gray-600 capitalize">{category}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="space-y-4 max-h-96 overflow-y-auto">
+                        {investorQA.map((qa, index) => (
+                          <div key={index} className="p-4 border border-gray-200 rounded-lg">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className={cn(
+                                "px-2 py-1 rounded-full text-xs font-medium capitalize",
+                                qa.difficulty === "easy" ? "bg-green-100 text-green-700" :
+                                qa.difficulty === "medium" ? "bg-yellow-100 text-yellow-700" :
+                                "bg-red-100 text-red-700"
+                              )}>
+                                {qa.difficulty}
+                              </span>
+                              <span className="text-xs text-gray-500 capitalize">{qa.category}</span>
+                            </div>
+                            <h5 className="font-semibold text-gray-900 mb-2">{qa.question}</h5>
+                            <p className="text-sm text-gray-600 mb-3">{qa.suggested_answer}</p>
+                            <div className="flex flex-wrap gap-1">
+                              {qa.key_points.map((point, pointIndex) => (
+                                <span key={pointIndex} className="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs">
+                                  {point}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Export Module */}
+            {currentModule === "export" && pitchDeckData && (
+              <motion.div
+                key="export"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="bg-white rounded-2xl shadow-elegant p-8 border border-gray-200"
+              >
+                <h3 className="text-2xl font-bold text-gray-900 mb-6 flex items-center">
+                  <Download className="w-6 h-6 text-orange-500 mr-2" />
+                  Export & Share
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="p-6 border border-gray-200 rounded-lg hover:border-orange-300 transition-colors">
+                    <div className="flex items-center justify-between mb-4">
+                      <FileText className="w-8 h-8 text-orange-500" />
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">Recommended</span>
+                    </div>
+                    <h4 className="font-semibold text-gray-900 mb-2">PowerPoint (PPTX)</h4>
+                    <p className="text-sm text-gray-600 mb-4">Professional presentation format with all slides and design</p>
+                    <button
+                      onClick={exportToPPTX}
+                      className="w-full px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700"
+                    >
+                      Download PPTX
+                    </button>
+                  </div>
+
+                  <div className="p-6 border border-gray-200 rounded-lg hover:border-orange-300 transition-colors">
+                    <div className="flex items-center justify-between mb-4">
+                      <Video className="w-8 h-8 text-blue-500" />
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">Coming Soon</span>
+                    </div>
+                    <h4 className="font-semibold text-gray-900 mb-2">Video Presentation</h4>
+                    <p className="text-sm text-gray-600 mb-4">Animated video with voiceover narration</p>
+                    <button
+                      disabled
+                      className="w-full px-4 py-2 bg-gray-300 text-gray-500 rounded-lg cursor-not-allowed"
+                    >
+                      Generate Video
+                    </button>
+                  </div>
+
+                  <div className="p-6 border border-gray-200 rounded-lg hover:border-orange-300 transition-colors">
+                    <div className="flex items-center justify-between mb-4">
+                      <Image className="w-8 h-8 text-purple-500" />
+                      <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">Available</span>
+                    </div>
+                    <h4 className="font-semibold text-gray-900 mb-2">Image Slides</h4>
+                    <p className="text-sm text-gray-600 mb-4">High-resolution PNG images of each slide</p>
+                    <button className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+                      Download Images
+                    </button>
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
+
+                <div className="mt-8 p-4 bg-gray-50 rounded-lg">
+                  <h4 className="font-semibold text-gray-900 mb-2">Sharing Options</h4>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+                      Share Link
+                    </button>
+                    <button className="px-3 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700">
+                      Email Investors
+                    </button>
+                    <button className="px-3 py-2 bg-gray-600 text-white rounded text-sm hover:bg-gray-700">
+                      Generate QR Code
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+            
+          </AnimatePresence>
         </div>
       </main>
     </div>

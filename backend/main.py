@@ -8,6 +8,7 @@ Main FastAPI application with MVP Agent integration.
 import os
 import asyncio
 import logging
+import uuid
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -18,14 +19,22 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-# Import MVP Agent
-from MVP_Agent import MVPNexoraAgent, WinsurfResponse
+# Import MVP Builder Agent
+from mvp_builder_agent import (
+    MVPBuilderAgent,
+    CodeGenerationRequest, 
+    WebsiteScrapingRequest, 
+    SandboxCreateRequest, 
+    FileUpdateRequest,
+    AIModel
+)
 
-# Import Idea Validation API
+# Import Idea Validation Agent
+from idea_validation_agent import IdeaValidationAgent
 from idea_validation_api import router as idea_validation_router
 
 # Import Business Planning Agent
-from business_planning_agent import BusinessPlanningAgent, BusinessPlanResponse
+from business_planning_agent import BusinessPlanningAgent, BusinessPlanResponse, router as business_planning_router
 
 # Import Market Research Agent
 from market_research_agent import MarketResearchAgent
@@ -46,8 +55,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global variables
+mvp_builder_agent = None
+
 # Initialize agents
-mvp_agent = None
+idea_validation_agent = None
 business_planning_agent = None
 market_research_agent = None
 pitch_deck_agent = None
@@ -55,7 +67,7 @@ pitch_deck_agent = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
-    global mvp_agent, business_planning_agent, market_research_agent, pitch_deck_agent
+    global mvp_agent, idea_validation_agent, business_planning_agent, market_research_agent, pitch_deck_agent
     
     # Startup
     logger.info("Starting up NEXORA API...")
@@ -69,27 +81,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize database: {str(e)}")
     
+    global mvp_builder_agent
     try:
-        mvp_agent = MVPNexoraAgent()
-        logger.info("MVP Nexora Agent initialized successfully")
+        mvp_builder_agent = MVPBuilderAgent()
+        logger.info("✓ MVP Builder Agent initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize MVP Agent: {str(e)}")
     
     try:
+        idea_validation_agent = IdeaValidationAgent()
+        logger.info("✓ Idea Validation Agent initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Idea Validation Agent: {str(e)}")
+    
+    try:
         business_planning_agent = BusinessPlanningAgent()
-        logger.info("Business Planning Agent initialized successfully")
+        logger.info("✓ Business Planning Agent initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Business Planning Agent: {str(e)}")
     
     try:
         market_research_agent = MarketResearchAgent()
-        logger.info("Market Research Agent initialized successfully")
+        logger.info("✓ Market Research Agent initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Market Research Agent: {str(e)}")
     
     try:
         pitch_deck_agent = PitchDeckAgent()
-        logger.info("Pitch Deck Agent initialized successfully")
+        logger.info("✓ Pitch Deck Agent initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Pitch Deck Agent: {str(e)}")
     
@@ -129,33 +148,12 @@ app.add_middleware(
 
 # Include routers
 app.include_router(idea_validation_router)
+app.include_router(business_planning_router)
 
 # ============================================================================
 # REQUEST/RESPONSE MODELS
 # ============================================================================
 
-class MVPDevelopmentRequest(BaseModel):
-    """MVP Development request model"""
-    productName: str = Field(..., description="Name of the product")
-    productIdea: str = Field(..., description="Detailed product idea/specification")
-    coreFeatures: List[str] = Field(default=[], description="List of core features")
-    targetPlatform: str = Field(default="web", description="Target platform")
-    techStack: List[str] = Field(default=[], description="Technology stack preferences")
-    projectType: str = Field(default="web-app", description="Type of project")
-    generateMultipleFiles: bool = Field(default=True, description="Generate multiple files")
-    includeComponents: bool = Field(default=True, description="Include components")
-    defaultLanguage: str = Field(default="react", description="Default language")
-    userId: Optional[str] = Field(None, description="User ID")
-    scrapeUrls: Optional[List[str]] = Field(None, description="URLs to scrape for reference")
-    userSubscription: str = Field(default="free", description="User subscription tier")
-
-
-class MVPRefineRequest(BaseModel):
-    """MVP Refinement request model"""
-    currentHtml: str = Field(..., description="Current HTML/code")
-    feedback: str = Field(..., description="User feedback for refinement")
-    userId: Optional[str] = Field(None, description="User ID")
-    userSubscription: str = Field(default="free", description="User subscription tier")
 
 
 class ChatRequest(BaseModel):
@@ -183,35 +181,22 @@ class E2BSandboxRequest(BaseModel):
 
 
 class ExecuteCodeRequest(BaseModel):
-    """Code execution request"""
     sandboxId: str = Field(..., description="Sandbox ID")
     code: str = Field(..., description="Code to execute")
     language: str = Field(default="javascript", description="Programming language")
 
 
-class BusinessPlanRequest(BaseModel):
-    """Business plan creation request"""
-    idea: str = Field(..., description="Business idea description", min_length=10)
-    industry: Optional[str] = Field("", description="Industry/sector")
-    target_market: Optional[str] = Field("", description="Target market description")
-    business_model: Optional[str] = Field("", description="Business model type")
-    region: Optional[str] = Field("United States", description="Geographic region")
-    budget: Optional[float] = Field(10000, description="Marketing budget", ge=0)
-    export_formats: Optional[List[str]] = Field(["pdf", "docx"], description="Export formats")
-    userId: Optional[str] = Field(None, description="User ID")
-
-
 class UserRegistrationRequest(BaseModel):
     """User registration request"""
     email: str = Field(..., description="User email")
-    name: str = Field(..., description="User name")
     password: str = Field(..., description="User password", min_length=6)
+    name: str = Field(..., description="User name")
 
 
 class UserLoginRequest(BaseModel):
     """User login request"""
     email: str = Field(..., description="User email")
-    password: str = Field(..., description="User password")
+    password: str = Field(..., description="User password", min_length=6)
 
 
 # ============================================================================
@@ -250,11 +235,25 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    # Check database connection safely
+    db_status = "disconnected"
+    try:
+        if db and db.test_connection():
+            db_status = "connected"
+    except Exception as e:
+        logger.warning(f"Database health check failed: {str(e)}")
+        db_status = f"error: {str(e)[:50]}"
+    
     return {
         "status": "ok",
-        "mvp_agent": "initialized" if mvp_agent else "not initialized",
-        "business_planning_agent": "initialized" if business_planning_agent else "not initialized",
-        "database": "connected" if db.test_connection() else "disconnected",
+        "agents": {
+            "mvp_agent": "initialized" if mvp_agent else "not initialized",
+            "idea_validation_agent": "initialized" if idea_validation_agent else "not initialized",
+            "business_planning_agent": "initialized" if business_planning_agent else "not initialized",
+            "market_research_agent": "initialized" if market_research_agent else "not initialized",
+            "pitch_deck_agent": "initialized" if pitch_deck_agent else "not initialized",
+        },
+        "database": db_status,
         "timestamp": datetime.now().isoformat()
     }
 
@@ -362,157 +361,14 @@ async def get_user_info(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/mvpDevelopment")
-async def mvp_development(
-    request: MVPDevelopmentRequest,
-    token: Optional[str] = Depends(verify_token)
-):
-    """
-    Main MVP Development endpoint
-    
-    Generates a complete full-stack application based on user specifications.
-    """
-    try:
-        if not mvp_agent:
-            raise HTTPException(status_code=503, detail="MVP Agent not initialized")
-        
-        logger.info(f"MVP Development request: {request.productName}")
-        
-        # Build comprehensive user request
-        user_request = f"""
-Build a {request.projectType} called "{request.productName}".
-
-Description: {request.productIdea}
-
-Core Features:
-{chr(10).join(f"- {feature}" for feature in request.coreFeatures)}
-
-Target Platform: {request.targetPlatform}
-Tech Stack: {', '.join(request.techStack) if request.techStack else 'Use best practices'}
-
-Requirements:
-- Generate multiple files with proper structure
-- Include reusable components
-- Modern, responsive UI with Tailwind CSS
-- Complete functionality with all features
-- Professional code quality
-        """.strip()
-        
-        # Get user subscription
-        subscription = request.userSubscription or get_user_subscription(request.userId)
-        
-        # Build MVP using the agent
-        response: WinsurfResponse = await mvp_agent.build_mvp(
-            user_request=user_request,
-            scrape_urls=request.scrapeUrls,
-            user_subscription=subscription
-        )
-        
-        # Format response for frontend
-        formatted_response = mvp_agent.format_response(response)
-        
-        # Extract HTML for live preview (if available)
-        live_preview_html = None
-        if response.files:
-            # Find index.html or main HTML file
-            for file_info in response.files:
-                if 'index.html' in file_info.path.lower() or file_info.path.endswith('.html'):
-                    # Read the actual file content
-                    try:
-                        from pathlib import Path
-                        import tempfile
-                        # The files are in a temp directory, we need to reconstruct the path
-                        # For now, use the preview_url or e2b_embed
-                        live_preview_html = response.e2b_embed
-                    except:
-                        pass
-                    break
-        
-        # Return response in format expected by frontend
-        return {
-            "status": "success",
-            "data": {
-                "livePreviewHtml": live_preview_html or response.e2b_embed,
-                "html": live_preview_html or response.e2b_embed,
-                "winsurf_response": formatted_response["winsurf_response"],
-                "preview_url": response.preview_url,
-                "artifact_zip": response.artifact_zip,
-                "files": [
-                    {
-                        "path": f.path,
-                        "preview": f.preview,
-                        "size": f.size,
-                        "language": f.language
-                    }
-                    for f in response.files
-                ],
-                "build_status": response.build.status,
-                "test_status": response.tests.status,
-                "next_steps": response.next_steps
-            }
-        }
-    
-    except Exception as e:
-        logger.error(f"Error in MVP development: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/mvp/refine")
-async def mvp_refine(
-    request: MVPRefineRequest,
-    token: Optional[str] = Depends(verify_token)
-):
-    """
-    Refine existing MVP based on user feedback
-    """
-    try:
-        if not mvp_agent:
-            raise HTTPException(status_code=503, detail="MVP Agent not initialized")
-        
-        logger.info(f"MVP Refinement request")
-        
-        # Build refinement request
-        user_request = f"""
-Modify the existing application based on this feedback:
 
-{request.feedback}
 
-Current code:
-```html
-{request.currentHtml[:1000]}...
-```
 
-Please make the requested changes while maintaining the existing structure and functionality.
-        """.strip()
-        
-        # Get user subscription
-        subscription = request.userSubscription or get_user_subscription(request.userId)
-        
-        # Build refined MVP
-        response: WinsurfResponse = await mvp_agent.build_mvp(
-            user_request=user_request,
-            scrape_urls=None,
-            user_subscription=subscription
-        )
-        
-        # Format response
-        formatted_response = mvp_agent.format_response(response)
-        
-        return {
-            "status": "success",
-            "data": {
-                "livePreviewHtml": response.e2b_embed,
-                "html": response.e2b_embed,
-                "winsurf_response": formatted_response["winsurf_response"],
-                "preview_url": response.preview_url,
-                "artifact_zip": response.artifact_zip,
-                "next_steps": response.next_steps
-            }
-        }
-    
-    except Exception as e:
-        logger.error(f"Error in MVP refinement: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
 
 @app.post("/api/chat")
@@ -521,23 +377,68 @@ async def chat(
     token: Optional[str] = Depends(verify_token)
 ):
     """
-    Chat endpoint for conversational AI
+    Chat endpoint for conversational AI with smart intent detection
     """
     try:
         if not mvp_agent:
             raise HTTPException(status_code=503, detail="MVP Agent not initialized")
         
+        message_lower = request.message.lower().strip()
+        
+        # Detect conversational greetings and casual messages
+        greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening']
+        casual_phrases = ['how are you', 'what can you do', 'help', 'who are you', 'what are you']
+        
+        is_greeting = any(message_lower.startswith(g) for g in greetings)
+        is_casual = any(phrase in message_lower for phrase in casual_phrases)
+        
+        # Build keywords that indicate MVP generation intent
+        build_keywords = ['build', 'create', 'make', 'develop', 'generate', 'design', 'app', 'website', 'application']
+        is_build_request = any(keyword in message_lower for keyword in build_keywords)
+        
+        # Determine system prompt based on intent
+        if is_greeting or is_casual:
+            system_prompt = """You are Nexora AI, a friendly AI assistant specialized in building MVPs and applications.
+
+Respond warmly and professionally. Introduce yourself and explain what you can do:
+- Build full-stack web applications
+- Create mobile apps
+- Generate business plans
+- Validate startup ideas
+- Create pitch decks
+
+Keep responses concise (2-3 sentences max)."""
+        
+        elif is_build_request:
+            system_prompt = """You are Nexora AI, an expert MVP builder. The user wants to build something.
+
+Ask clarifying questions to understand:
+1. What type of application? (web app, mobile app, etc.)
+2. Main features needed?
+3. Target users?
+4. Tech stack preferences?
+
+Be helpful and guide them to provide details for MVP generation."""
+        
+        else:
+            system_prompt = """You are Nexora AI, a helpful assistant for building applications.
+
+Provide helpful, concise responses. If the user seems interested in building something, guide them toward MVP generation."""
+        
         # Use DeepSeek for chat responses
         response = await mvp_agent.deepseek.generate_code(
             prompt=request.message,
-            system_prompt="You are Nexora AI, a helpful assistant for building applications. Be concise and helpful.",
-            temperature=0.7,
-            max_tokens=1000
+            system_prompt=system_prompt,
+            temperature=0.8,  # More creative for conversation
+            max_tokens=500,
+            timeout=30,
+            max_retries=2
         )
         
         return {
             "status": "success",
             "response": response,
+            "intent": "greeting" if is_greeting else ("build" if is_build_request else "general"),
             "timestamp": datetime.now().isoformat()
         }
     
@@ -637,221 +538,7 @@ async def execute_code(request: ExecuteCodeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================================================
-# BUSINESS PLANNING API ENDPOINTS
-# ============================================================================
-
-@app.post("/api/business-plan/create")
-async def create_business_plan(
-    request: BusinessPlanRequest,
-    token: Optional[str] = Depends(verify_token)
-):
-    """
-    Create a complete business plan
-    
-    Generates:
-    - Lean Canvas (all 9 blocks)
-    - Financial projections (3-year)
-    - Team composition
-    - Marketing strategy
-    - Investor summary
-    - Regulatory compliance analysis
-    - AI co-founder feedback
-    - Exports to PDF/DOCX
-    """
-    try:
-        if not business_planning_agent:
-            raise HTTPException(status_code=503, detail="Business Planning Agent not initialized")
-        
-        logger.info(f"Creating business plan for: {request.idea[:50]}...")
-        
-        # Create business plan
-        business_plan: BusinessPlanResponse = await business_planning_agent.create_business_plan(
-            idea=request.idea,
-            industry=request.industry or "",
-            target_market=request.target_market or "",
-            business_model=request.business_model or "",
-            region=request.region or "United States",
-            budget=request.budget or 10000,
-            export_formats=request.export_formats or ["pdf", "docx"]
-        )
-        
-        # Format response
-        formatted_response = business_planning_agent.format_response(business_plan)
-        
-        return {
-            "status": "success",
-            "data": formatted_response
-        }
-    
-    except Exception as e:
-        logger.error(f"Error creating business plan: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/business-plan/lean-canvas")
-async def generate_lean_canvas(
-    request: BaseModel,
-    token: Optional[str] = Depends(verify_token)
-):
-    """Generate Lean Canvas only"""
-    try:
-        if not business_planning_agent:
-            raise HTTPException(status_code=503, detail="Business Planning Agent not initialized")
-        
-        idea = request.dict().get("idea", "")
-        target_market = request.dict().get("target_market", "")
-        business_model = request.dict().get("business_model", "")
-        
-        lean_canvas = await business_planning_agent.generate_lean_canvas(
-            idea=idea,
-            target_market=target_market,
-            business_model=business_model
-        )
-        
-        from dataclasses import asdict
-        return {
-            "status": "success",
-            "data": asdict(lean_canvas)
-        }
-    
-    except Exception as e:
-        logger.error(f"Error generating lean canvas: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/business-plan/financials")
-async def estimate_financials(
-    request: BaseModel,
-    token: Optional[str] = Depends(verify_token)
-):
-    """Estimate financial projections"""
-    try:
-        if not business_planning_agent:
-            raise HTTPException(status_code=503, detail="Business Planning Agent not initialized")
-        
-        idea = request.dict().get("idea", "")
-        business_model = request.dict().get("business_model", "")
-        target_market_size = request.dict().get("target_market_size", "")
-        
-        financials = await business_planning_agent.estimate_financials(
-            idea=idea,
-            business_model=business_model,
-            target_market_size=target_market_size
-        )
-        
-        from dataclasses import asdict
-        return {
-            "status": "success",
-            "data": asdict(financials)
-        }
-    
-    except Exception as e:
-        logger.error(f"Error estimating financials: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/business-plan/team")
-async def map_team_roles(
-    request: BaseModel,
-    token: Optional[str] = Depends(verify_token)
-):
-    """Map team roles and composition"""
-    try:
-        if not business_planning_agent:
-            raise HTTPException(status_code=503, detail="Business Planning Agent not initialized")
-        
-        idea = request.dict().get("idea", "")
-        business_model = request.dict().get("business_model", "")
-        stage = request.dict().get("stage", "pre-seed")
-        
-        team = await business_planning_agent.map_team_roles(
-            idea=idea,
-            business_model=business_model,
-            stage=stage
-        )
-        
-        from dataclasses import asdict
-        return {
-            "status": "success",
-            "data": asdict(team)
-        }
-    
-    except Exception as e:
-        logger.error(f"Error mapping team roles: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/business-plan/marketing")
-async def build_marketing_strategy(
-    request: BaseModel,
-    token: Optional[str] = Depends(verify_token)
-):
-    """Build marketing strategy"""
-    try:
-        if not business_planning_agent:
-            raise HTTPException(status_code=503, detail="Business Planning Agent not initialized")
-        
-        idea = request.dict().get("idea", "")
-        target_audience = request.dict().get("target_audience", "")
-        budget = request.dict().get("budget", 10000)
-        
-        marketing = await business_planning_agent.build_marketing_strategy(
-            idea=idea,
-            target_audience=target_audience,
-            budget=budget
-        )
-        
-        from dataclasses import asdict
-        return {
-            "status": "success",
-            "data": asdict(marketing)
-        }
-    
-    except Exception as e:
-        logger.error(f"Error building marketing strategy: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/business-plan/compliance")
-async def check_compliance(
-    request: BaseModel,
-    token: Optional[str] = Depends(verify_token)
-):
-    """Check regulatory compliance"""
-    try:
-        if not business_planning_agent:
-            raise HTTPException(status_code=503, detail="Business Planning Agent not initialized")
-        
-        idea = request.dict().get("idea", "")
-        industry = request.dict().get("industry", "")
-        region = request.dict().get("region", "United States")
-        
-        compliance = await business_planning_agent.check_regulatory_compliance(
-            idea=idea,
-            industry=industry,
-            region=region
-        )
-        
-        from dataclasses import asdict
-        return {
-            "status": "success",
-            "data": asdict(compliance)
-        }
-    
-    except Exception as e:
-        logger.error(f"Error checking compliance: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/business-plan/health")
-async def business_plan_health():
-    """Health check for Business Planning Agent"""
-    return {
-        "status": "ok",
-        "agent": "initialized" if business_planning_agent else "not initialized",
-        "timestamp": datetime.now().isoformat()
-    }
+# Business Planning endpoints are now handled by the business_planning_router
 
 
 # ============================================================================
@@ -927,57 +614,303 @@ async def market_research_health():
 # PITCH DECK API ENDPOINTS
 # ============================================================================
 
-@app.post("/api/pitch-deck/generate")
-async def generate_pitch_deck(
-    request: BaseModel,
+class PitchDeckCreateRequest(BaseModel):
+    """Pitch deck creation request"""
+    business_idea: str = Field(..., description="Business idea description")
+    business_name: str = Field(default="", description="Business name")
+    target_market: str = Field(default="", description="Target market")
+    funding_ask: float = Field(default=0, description="Funding ask amount")
+    brand_tone: str = Field(default="professional", description="Brand tone")
+    include_voiceover: bool = Field(default=True, description="Include voiceover")
+    include_demo_script: bool = Field(default=True, description="Include demo script")
+    include_qa: bool = Field(default=True, description="Include Q&A")
+
+
+class PitchDeckSlidesRequest(BaseModel):
+    """Pitch deck slides generation request"""
+    business_idea: str = Field(..., description="Business idea description")
+    business_name: str = Field(default="", description="Business name")
+    target_market: str = Field(default="", description="Target market")
+    funding_ask: float = Field(default=0, description="Funding ask amount")
+
+
+class VoiceoverRequest(BaseModel):
+    """Voiceover generation request"""
+    slides: Dict[str, Any] = Field(..., description="Slides data")
+    voice_style: str = Field(default="professional", description="Voice style")
+
+
+class DemoScriptRequest(BaseModel):
+    """Demo script generation request"""
+    slides: Dict[str, Any] = Field(..., description="Slides data")
+    target_duration_minutes: float = Field(default=5.0, description="Target duration")
+
+
+class InvestorQARequest(BaseModel):
+    """Investor Q&A generation request"""
+    business_idea: str = Field(..., description="Business idea")
+    slides: Dict[str, Any] = Field(..., description="Slides data")
+    num_questions: int = Field(default=10, description="Number of questions")
+
+
+class DesignThemeRequest(BaseModel):
+    """Design theme selection request"""
+    business_idea: str = Field(..., description="Business idea")
+    brand_tone: str = Field(default="professional", description="Brand tone")
+
+
+@app.post("/api/pitch-deck/create")
+async def create_pitch_deck(
+    request: PitchDeckCreateRequest,
     token: Optional[str] = Depends(verify_token)
 ):
-    """Generate a complete pitch deck"""
+    """Create a complete pitch deck with all features"""
     try:
         if not pitch_deck_agent:
             raise HTTPException(status_code=503, detail="Pitch Deck Agent not initialized")
         
-        data = request.dict()
-        pitch_deck = await pitch_deck_agent.generate_slides(
-            business_idea=data.get("business_idea", ""),
-            business_name=data.get("business_name", ""),
-            target_market=data.get("target_market", ""),
-            funding_ask=data.get("funding_ask", 0)
+        logger.info(f"Creating pitch deck for: {request.business_name or request.business_idea[:50]}")
+        
+        # Create complete pitch deck
+        pitch_deck = await pitch_deck_agent.create_pitch_deck(
+            business_idea=request.business_idea,
+            business_name=request.business_name,
+            target_market=request.target_market,
+            funding_ask=request.funding_ask,
+            brand_tone=request.brand_tone,
+            include_voiceover=request.include_voiceover,
+            include_demo_script=request.include_demo_script,
+            include_qa=request.include_qa
         )
+        
+        # Convert to dict for JSON serialization
+        from dataclasses import asdict
+        pitch_deck_dict = asdict(pitch_deck)
         
         return {
             "status": "success",
-            "data": pitch_deck
+            "data": pitch_deck_dict
         }
     
     except Exception as e:
-        logger.error(f"Error generating pitch deck: {str(e)}")
+        logger.error(f"Error creating pitch deck: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pitch-deck/slides")
+async def generate_pitch_deck_slides(
+    request: PitchDeckSlidesRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Generate pitch deck slides only"""
+    try:
+        if not pitch_deck_agent:
+            raise HTTPException(status_code=503, detail="Pitch Deck Agent not initialized")
+        
+        slides = await pitch_deck_agent.generate_slides(
+            business_idea=request.business_idea,
+            business_name=request.business_name,
+            target_market=request.target_market,
+            funding_ask=request.funding_ask
+        )
+        
+        from dataclasses import asdict
+        slides_dict = asdict(slides)
+        
+        return {
+            "status": "success",
+            "data": slides_dict
+        }
+    
+    except Exception as e:
+        logger.error(f"Error generating slides: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/pitch-deck/voiceover")
 async def generate_voiceover(
-    request: BaseModel,
+    request: VoiceoverRequest,
     token: Optional[str] = Depends(verify_token)
 ):
-    """Generate voiceover for pitch deck"""
+    """Generate voiceover for pitch deck slides"""
     try:
         if not pitch_deck_agent:
             raise HTTPException(status_code=503, detail="Pitch Deck Agent not initialized")
         
-        data = request.dict()
-        voiceover = await pitch_deck_agent.generate_voiceover(
-            slides_content=data.get("slides_content", []),
-            voice_style=data.get("voice_style", "professional")
+        # Convert dict back to slides object
+        from pitch_deck_agent import PitchDeckSlides, SlideContent
+        
+        slides_data = request.slides
+        slides = PitchDeckSlides(
+            title_slide=SlideContent(**slides_data.get("title_slide", {})),
+            problem_slide=SlideContent(**slides_data.get("problem_slide", {})),
+            solution_slide=SlideContent(**slides_data.get("solution_slide", {})),
+            market_slide=SlideContent(**slides_data.get("market_slide", {})),
+            product_slide=SlideContent(**slides_data.get("product_slide", {})),
+            business_model_slide=SlideContent(**slides_data.get("business_model_slide", {})),
+            traction_slide=SlideContent(**slides_data.get("traction_slide", {})),
+            competition_slide=SlideContent(**slides_data.get("competition_slide", {})),
+            team_slide=SlideContent(**slides_data.get("team_slide", {})),
+            financials_slide=SlideContent(**slides_data.get("financials_slide", {})),
+            ask_slide=SlideContent(**slides_data.get("ask_slide", {})),
+            closing_slide=SlideContent(**slides_data.get("closing_slide", {}))
         )
+        
+        voiceovers = await pitch_deck_agent.generate_voiceovers(slides)
+        
+        from dataclasses import asdict
+        voiceovers_dict = [asdict(v) for v in voiceovers]
         
         return {
             "status": "success",
-            "data": voiceover
+            "data": voiceovers_dict
         }
     
     except Exception as e:
         logger.error(f"Error generating voiceover: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pitch-deck/demo-script")
+async def generate_demo_script(
+    request: DemoScriptRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Generate demo script for pitch deck"""
+    try:
+        if not pitch_deck_agent:
+            raise HTTPException(status_code=503, detail="Pitch Deck Agent not initialized")
+        
+        # Convert dict back to slides object
+        from pitch_deck_agent import PitchDeckSlides, SlideContent
+        
+        slides_data = request.slides
+        slides = PitchDeckSlides(
+            title_slide=SlideContent(**slides_data.get("title_slide", {})),
+            problem_slide=SlideContent(**slides_data.get("problem_slide", {})),
+            solution_slide=SlideContent(**slides_data.get("solution_slide", {})),
+            market_slide=SlideContent(**slides_data.get("market_slide", {})),
+            product_slide=SlideContent(**slides_data.get("product_slide", {})),
+            business_model_slide=SlideContent(**slides_data.get("business_model_slide", {})),
+            traction_slide=SlideContent(**slides_data.get("traction_slide", {})),
+            competition_slide=SlideContent(**slides_data.get("competition_slide", {})),
+            team_slide=SlideContent(**slides_data.get("team_slide", {})),
+            financials_slide=SlideContent(**slides_data.get("financials_slide", {})),
+            ask_slide=SlideContent(**slides_data.get("ask_slide", {})),
+            closing_slide=SlideContent(**slides_data.get("closing_slide", {}))
+        )
+        
+        demo_script = await pitch_deck_agent.generate_demo_script(
+            slides=slides,
+            target_duration_minutes=request.target_duration_minutes
+        )
+        
+        from dataclasses import asdict
+        script_dict = asdict(demo_script)
+        
+        return {
+            "status": "success",
+            "data": script_dict
+        }
+    
+    except Exception as e:
+        logger.error(f"Error generating demo script: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pitch-deck/investor-qa")
+async def generate_investor_qa(
+    request: InvestorQARequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Generate investor Q&A questions"""
+    try:
+        if not pitch_deck_agent:
+            raise HTTPException(status_code=503, detail="Pitch Deck Agent not initialized")
+        
+        # Convert dict back to slides object
+        from pitch_deck_agent import PitchDeckSlides, SlideContent
+        
+        slides_data = request.slides
+        slides = PitchDeckSlides(
+            title_slide=SlideContent(**slides_data.get("title_slide", {})),
+            problem_slide=SlideContent(**slides_data.get("problem_slide", {})),
+            solution_slide=SlideContent(**slides_data.get("solution_slide", {})),
+            market_slide=SlideContent(**slides_data.get("market_slide", {})),
+            product_slide=SlideContent(**slides_data.get("product_slide", {})),
+            business_model_slide=SlideContent(**slides_data.get("business_model_slide", {})),
+            traction_slide=SlideContent(**slides_data.get("traction_slide", {})),
+            competition_slide=SlideContent(**slides_data.get("competition_slide", {})),
+            team_slide=SlideContent(**slides_data.get("team_slide", {})),
+            financials_slide=SlideContent(**slides_data.get("financials_slide", {})),
+            ask_slide=SlideContent(**slides_data.get("ask_slide", {})),
+            closing_slide=SlideContent(**slides_data.get("closing_slide", {}))
+        )
+        
+        investor_qa = await pitch_deck_agent.generate_investor_qa(
+            business_idea=request.business_idea,
+            slides=slides,
+            num_questions=request.num_questions
+        )
+        
+        from dataclasses import asdict
+        qa_dict = [asdict(qa) for qa in investor_qa]
+        
+        return {
+            "status": "success",
+            "data": qa_dict
+        }
+    
+    except Exception as e:
+        logger.error(f"Error generating investor Q&A: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/pitch-deck/design-theme")
+async def select_design_theme(
+    request: DesignThemeRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Select design theme for pitch deck"""
+    try:
+        if not pitch_deck_agent:
+            raise HTTPException(status_code=503, detail="Pitch Deck Agent not initialized")
+        
+        theme = await pitch_deck_agent.select_design_theme(
+            business_idea=request.business_idea,
+            brand_tone=request.brand_tone
+        )
+        
+        from dataclasses import asdict
+        theme_dict = asdict(theme)
+        
+        return {
+            "status": "success",
+            "data": theme_dict
+        }
+    
+    except Exception as e:
+        logger.error(f"Error selecting design theme: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/pitch-deck/export/{deck_id}/pptx")
+async def export_pitch_deck_pptx(deck_id: str):
+    """Export pitch deck to PPTX format"""
+    try:
+        if not pitch_deck_agent:
+            raise HTTPException(status_code=503, detail="Pitch Deck Agent not initialized")
+        
+        # For now, return a placeholder response
+        # In a real implementation, you would retrieve the deck by ID and export it
+        return {
+            "status": "success",
+            "message": "PPTX export functionality will be implemented with deck storage",
+            "deck_id": deck_id
+        }
+    
+    except Exception as e:
+        logger.error(f"Error exporting PPTX: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1020,6 +953,415 @@ async def general_exception_handler(request, exc):
             "timestamp": datetime.now().isoformat()
         }
     )
+
+
+# ============================================================================
+# MVP BUILDER API ENDPOINTS
+# ============================================================================
+
+@app.post("/api/mvp-builder/generate-code-stream")
+async def generate_code_stream(
+    request: CodeGenerationRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Generate code with streaming response"""
+    try:
+        async def stream_generator():
+            async for chunk in mvp_builder_agent.generate_code_stream(
+                prompt=request.prompt,
+                model=request.model,
+                context=request.context,
+                is_edit=request.is_edit
+            ):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        
+        return StreamingResponse(
+            stream_generator(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in code generation stream: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mvp-builder/scrape-website")
+async def scrape_website_endpoint(request: WebsiteScrapingRequest):
+    """Scrape website content and optionally take screenshot"""
+    try:
+        agent = MVPBuilderAgent()
+        result = await agent.scrape_website(
+            url=request.url,
+            include_screenshot=request.include_screenshot
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Website scraping error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mvp-builder/search")
+async def search_websites(request: dict):
+    """Search websites using Firecrawl API (like open-lovable)"""
+    try:
+        query = request.get('query')
+        if not query:
+            raise HTTPException(status_code=400, detail="Query is required")
+
+        # Use Firecrawl search to get top 10 results with screenshots
+        import httpx
+        
+        firecrawl_api_key = os.getenv('FIRECRAWL_API_KEY')
+        if not firecrawl_api_key:
+            raise HTTPException(status_code=500, detail="Firecrawl API key not configured")
+
+        async with httpx.AsyncClient() as client:
+            search_response = await client.post(
+                'https://api.firecrawl.dev/v1/search',
+                headers={
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {firecrawl_api_key}',
+                },
+                json={
+                    'query': query,
+                    'limit': 10,
+                    'scrapeOptions': {
+                        'formats': ['markdown', 'screenshot'],
+                        'onlyMainContent': True,
+                    },
+                },
+                timeout=30.0
+            )
+
+            if not search_response.is_success:
+                raise HTTPException(status_code=500, detail="Search failed")
+
+            search_data = search_response.json()
+            
+            # Format results with screenshots and markdown
+            results = []
+            if search_data.get('data'):
+                for result in search_data['data']:
+                    results.append({
+                        'url': result.get('url', ''),
+                        'title': result.get('title', result.get('url', '')),
+                        'description': result.get('description', ''),
+                        'screenshot': result.get('screenshot'),
+                        'markdown': result.get('markdown', ''),
+                    })
+
+            return {'results': results}
+            
+    except Exception as e:
+        logger.error(f"Search error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to perform search: {str(e)}")
+
+
+@app.post("/api/mvp-builder/create-sandbox")
+async def create_sandbox(
+    request: SandboxCreateRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Create a new E2B sandbox"""
+    try:
+        sandbox_info = await mvp_builder_agent.create_sandbox(
+            template=request.template,
+            files=request.files
+        )
+        
+        return {
+            "status": "success",
+            "data": {
+                "sandbox_id": sandbox_info.id,
+                "status": sandbox_info.status.value,
+                "url": sandbox_info.url,
+                "created_at": sandbox_info.created_at
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Error creating sandbox: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mvp-builder/update-files")
+async def update_sandbox_files(
+    request: FileUpdateRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Update files in an E2B sandbox"""
+    try:
+        success = await mvp_builder_agent.update_sandbox_files(
+            sandbox_id=request.sandbox_id,
+            files=request.files
+        )
+        
+        return {
+            "status": "success" if success else "error",
+            "message": "Files updated successfully" if success else "Failed to update files"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error updating sandbox files: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/mvp-builder/sandbox-status/{sandbox_id}")
+async def get_sandbox_status(
+    sandbox_id: str,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Get sandbox status and information"""
+    try:
+        sandbox_info = await mvp_builder_agent.get_sandbox_status(sandbox_id)
+        
+        if not sandbox_info:
+            raise HTTPException(status_code=404, detail="Sandbox not found")
+        
+        return {
+            "status": "success",
+            "data": {
+                "sandbox_id": sandbox_info.id,
+                "status": sandbox_info.status.value,
+                "url": sandbox_info.url,
+                "created_at": sandbox_info.created_at,
+                "files": {
+                    path: {
+                        "size": file_info.size,
+                        "last_modified": file_info.last_modified
+                    }
+                    for path, file_info in sandbox_info.files.items()
+                } if sandbox_info.files else {}
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting sandbox status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/mvp-builder/sandbox/{sandbox_id}")
+async def cleanup_sandbox(
+    sandbox_id: str,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Clean up and delete a sandbox"""
+    try:
+        success = await mvp_builder_agent.cleanup_sandbox(sandbox_id)
+        
+        return {
+            "status": "success" if success else "error",
+            "message": "Sandbox cleaned up successfully" if success else "Failed to cleanup sandbox"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error cleaning up sandbox: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mvp-builder/conversation")
+async def create_conversation(token: Optional[str] = Depends(verify_token)):
+    """Create a new conversation"""
+    try:
+        conversation_id = mvp_builder_agent.create_conversation()
+        
+        return {
+            "status": "success",
+            "conversation_id": conversation_id
+        }
+    
+    except Exception as e:
+        logger.error(f"Error creating conversation: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/mvp-builder/style-templates")
+async def get_style_templates():
+    """Get available style templates"""
+    try:
+        templates = [
+            {
+                "id": "glassmorphism",
+                "name": "Glassmorphism",
+                "description": "Frosted glass effect with transparency",
+                "preview_color": "#ffffff40",
+                "category": "modern"
+            },
+            {
+                "id": "neumorphism",
+                "name": "Neumorphism",
+                "description": "Soft 3D shadows and highlights",
+                "preview_color": "#e0e5ec",
+                "category": "modern"
+            },
+            {
+                "id": "brutalism",
+                "name": "Brutalism",
+                "description": "Bold, raw, and uncompromising design",
+                "preview_color": "#000000",
+                "category": "bold"
+            },
+            {
+                "id": "minimalist",
+                "name": "Minimalist",
+                "description": "Clean, simple, and focused",
+                "preview_color": "#ffffff",
+                "category": "clean"
+            },
+            {
+                "id": "dark-mode",
+                "name": "Dark Mode",
+                "description": "Dark theme with high contrast",
+                "preview_color": "#1a1a1a",
+                "category": "dark"
+            },
+            {
+                "id": "gradient-rich",
+                "name": "Gradient Rich",
+                "description": "Vibrant gradients and colors",
+                "preview_color": "linear-gradient(45deg, #ff6b6b, #4ecdc4)",
+                "category": "colorful"
+            },
+            {
+                "id": "3d-depth",
+                "name": "3D Depth",
+                "description": "Dimensional layers and depth",
+                "preview_color": "#2c3e50",
+                "category": "dimensional"
+            },
+            {
+                "id": "retro-wave",
+                "name": "Retro Wave",
+                "description": "80s inspired neon aesthetics",
+                "preview_color": "linear-gradient(45deg, #ff0080, #00ffff)",
+                "category": "retro"
+            }
+        ]
+        
+        return {
+            "status": "success",
+            "data": templates
+        }
+    
+    except Exception as e:
+        logger.error(f"Error fetching style templates: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/mvp-builder/health")
+async def mvp_builder_health():
+    """Health check for MVP Builder"""
+    try:
+        return {
+            "status": "ok",
+            "agent": "initialized",
+            "models": {
+                "deepseek": bool(mvp_builder_agent.deepseek_api_key),
+                "groq": bool(mvp_builder_agent.groq_api_key),
+                "kimi": bool(mvp_builder_agent.kimi_api_key)
+            },
+            "services": {
+                "firecrawl": bool(mvp_builder_agent.firecrawl_api_key),
+                "e2b": bool(mvp_builder_agent.e2b_api_key)
+            },
+            "active_sandboxes": len(mvp_builder_agent.active_sandboxes),
+            "active_conversations": len(mvp_builder_agent.conversations),
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in MVP Builder health check: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/mvp-builder/sandbox-files/{sandbox_id}")
+async def get_sandbox_files(
+    sandbox_id: str,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Get all files from sandbox with manifest"""
+    try:
+        result = await mvp_builder_agent.get_sandbox_files(sandbox_id)
+        
+        return {
+            "status": "success",
+            "data": result
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting sandbox files: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mvp-builder/detect-packages")
+async def detect_and_install_packages(
+    request: BaseModel,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Detect and install required packages"""
+    try:
+        data = request.dict()
+        sandbox_id = data.get("sandbox_id")
+        files = data.get("files", {})
+        
+        if not sandbox_id:
+            raise HTTPException(status_code=400, detail="sandbox_id is required")
+        
+        result = await mvp_builder_agent.detect_and_install_packages(sandbox_id, files)
+        
+        return {
+            "status": "success" if result.get("success") else "error",
+            "data": result
+        }
+    
+    except Exception as e:
+        logger.error(f"Error detecting/installing packages: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mvp-builder/apply-code-stream")
+async def apply_code_stream(
+    request: BaseModel,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Apply generated code to sandbox with streaming progress"""
+    try:
+        data = request.dict()
+        sandbox_id = data.get("sandbox_id")
+        generated_code = data.get("code")
+        is_edit = data.get("is_edit", False)
+        
+        if not sandbox_id or not generated_code:
+            raise HTTPException(status_code=400, detail="sandbox_id and code are required")
+        
+        async def stream_generator():
+            async for chunk in mvp_builder_agent.apply_code_to_sandbox(
+                sandbox_id=sandbox_id,
+                generated_code=generated_code,
+                is_edit=is_edit
+            ):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        
+        return StreamingResponse(
+            stream_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error applying code stream: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================

@@ -331,7 +331,7 @@ const Footer = () => {
             <div className="flex items-center space-x-6 text-sm text-gray-600 dark:text-gray-400">
               <span>Made with</span>
               <Heart className="w-4 h-4 text-red-500 fill-current" />
-              <span>in San Francisco</span>
+              <span>in Bengaluru</span>
             </div>
           </div>
         </div>

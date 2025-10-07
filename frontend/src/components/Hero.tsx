@@ -380,12 +380,12 @@ const Hero = memo(() => {
           transition={{ delay: 1.2 }}
           className="mt-12 text-center"
         >
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-8 font-medium">
+          <p className="text-base md:text-lg text-gray-500 dark:text-gray-400 mb-10 font-medium">
             ⭐ Trusted by entrepreneurs worldwide • Featured in TechCrunch, Forbes & Entrepreneur
           </p>
           
           {/* Trust Badges */}
-          <div className="flex flex-wrap justify-center items-center gap-6 mb-8">
+          <div className="flex flex-wrap justify-center items-center gap-6 md:gap-8 mb-12">
             {[
               { name: "AI-Powered", icon: "🤖" },
               { name: "Secure & Private", icon: "🔒" },
@@ -397,27 +397,27 @@ const Hero = memo(() => {
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 1.3 + i * 0.1 }}
-                className="flex items-center space-x-2 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm px-4 py-2 rounded-full border border-gray-200 dark:border-gray-700 shadow-sm"
+                className="flex items-center space-x-2 md:space-x-3 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm px-5 py-3 md:px-6 md:py-3.5 rounded-full border border-gray-200 dark:border-gray-700 shadow-md hover:shadow-lg transition-shadow"
               >
-                <span className="text-lg">{badge.icon}</span>
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{badge.name}</span>
+                <span className="text-xl md:text-2xl">{badge.icon}</span>
+                <span className="text-sm md:text-base font-medium text-gray-700 dark:text-gray-300">{badge.name}</span>
               </motion.div>
             ))}
           </div>
 
           {/* Social Proof Numbers */}
-          <div className="flex flex-wrap justify-center items-center gap-8 opacity-80">
+          <div className="flex flex-wrap justify-center items-center gap-10 md:gap-16 opacity-80">
             <div className="text-center">
-              <div className="text-2xl font-bold text-pulse-600">4.9/5</div>
-              <div className="text-sm text-gray-500">User Rating</div>
+              <div className="text-3xl md:text-4xl font-bold text-pulse-600">4.9/5</div>
+              <div className="text-sm md:text-base text-gray-500 mt-1">User Rating</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-pulse-600">50+</div>
-              <div className="text-sm text-gray-500">Countries</div>
+              <div className="text-3xl md:text-4xl font-bold text-pulse-600">50+</div>
+              <div className="text-sm md:text-base text-gray-500 mt-1">Countries</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-pulse-600">$2M+</div>
-              <div className="text-sm text-gray-500">Funding Raised</div>
+              <div className="text-3xl md:text-4xl font-bold text-pulse-600">$2M+</div>
+              <div className="text-sm md:text-base text-gray-500 mt-1">Funding Raised</div>
             </div>
           </div>
         </motion.div>
