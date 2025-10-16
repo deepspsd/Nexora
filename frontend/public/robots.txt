@@ -1,0 +1,13 @@
+# Robots.txt for NEXORA
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /dashboard
+Disallow: /profile
+Disallow: /settings
+
+# Sitemap
+Sitemap: https://nexora.ai/sitemap.xml
+
+# Crawl-delay for polite crawling
+Crawl-delay: 1

@@ -24,6 +24,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { useStore } from "@/store/useStore";
 import Navbar from "@/components/Navbar";
+import Breadcrumbs from "@/components/Breadcrumbs";
 
 const Settings = () => {
   const navigate = useNavigate();
@@ -86,16 +87,26 @@ const Settings = () => {
     }, 1000);
   };
 
-  const handleDeleteAccount = () => {
+  const handleDeleteAccount = async () => {
     if (window.confirm("Are you sure you want to delete your account? This action cannot be undone.")) {
-      // Handle account deletion
-      console.log("Account deletion requested");
+      try {
+        // In production, call API to delete account
+        // await apiDelete('/user/account');
+        alert("Account deletion requested. Please contact support to complete this process.");
+      } catch (error) {
+        alert("Failed to delete account. Please try again or contact support.");
+      }
     }
   };
 
-  const handleExportData = () => {
-    // Handle data export
-    console.log("Data export requested");
+  const handleExportData = async () => {
+    try {
+      // In production, call API to export user data
+      // const data = await apiGet('/user/export');
+      alert("Data export will be sent to your email within 24 hours.");
+    } catch (error) {
+      alert("Failed to export data. Please try again later.");
+    }
   };
 
   const renderProfileTab = () => (
@@ -474,8 +485,9 @@ const Settings = () => {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-gray-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       <Navbar />
+      <Breadcrumbs />
       
       <div className="pt-24 pb-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

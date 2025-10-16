@@ -5,18 +5,17 @@ MySQL Database on Aiven Cloud
 
 import os
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from datetime import datetime
+from dotenv import load_dotenv
 from contextlib import contextmanager
 import mysql.connector
-from mysql.connector import Error, pooling
-from dotenv import load_dotenv
+from mysql.connector import pooling, Error
 
-# Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 # Database configuration
 DB_CONFIG = {
@@ -33,8 +32,10 @@ DB_CONFIG = {
 # Connection pool configuration
 POOL_CONFIG = {
     'pool_name': 'nexora_pool',
-    'pool_size': 5,
+    'pool_size': 20,  # Increased from 5 for better performance
     'pool_reset_session': True,
+    'pool_pre_ping': True,  # Verify connections before use
+    'pool_recycle': 3600,  # Recycle connections every hour
 }
 
 # Global connection pool
@@ -115,6 +116,36 @@ def execute_query(query: str, params: tuple = None, fetch_one: bool = False, fet
                 result = cursor.rowcount
             
             return result
+        finally:
+            cursor.close()
+
+
+def create_indexes():
+    """Create database indexes for performance"""
+    global connection_pool
+    
+    if connection_pool is None:
+        logger.warning("Skipping index creation - database not available")
+        return False
+    
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+        "CREATE INDEX IF NOT EXISTS idx_projects_user_created ON projects(user_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_generations_user_type ON generations(user_id, type, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_activities_user_created ON activities(user_id, created_at DESC)",
+    ]
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        try:
+            for index_sql in indexes:
+                cursor.execute(index_sql)
+            conn.commit()
+            logger.info("Database indexes created successfully")
+            return True
+        except Error as e:
+            logger.error(f"Error creating indexes: {e}")
+            return False
         finally:
             cursor.close()
 
@@ -227,6 +258,10 @@ def create_tables():
             
             conn.commit()
             logger.info("All database tables created successfully")
+            
+            # Create indexes for performance
+            create_indexes()
+            
             return True
         except Error as e:
             logger.error(f"Error creating tables: {e}")

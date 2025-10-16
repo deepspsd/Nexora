@@ -14,13 +14,25 @@ const Navbar = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [userInfo, setUserInfo] = useState<any>(null);
+  const [userInfo, setUserInfo] = useState<{
+    id: string;
+    name: string;
+    email: string;
+    credits: number;
+  } | null>(null);
   
   const { theme, toggleTheme, searchQuery, setSearchQuery } = useStore();
 
   useEffect(() => {
+    let ticking = false;
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 10);
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          setIsScrolled(window.scrollY > 10);
+          ticking = false;
+        });
+        ticking = true;
+      }
     };
     
     window.addEventListener("scroll", handleScroll, { passive: true });
@@ -123,12 +135,7 @@ const Navbar = () => {
 
   return (
     <header
-      className={cn(
-        "fixed top-0 left-0 right-0 z-50 py-2 sm:py-3 md:py-4 transition-all duration-300",
-        isScrolled 
-          ? "bg-white/95 dark:bg-gray-900 backdrop-blur-md shadow-sm dark:shadow-gray-800/20" 
-          : "bg-gradient-to-b from-black/30 to-transparent backdrop-blur-sm"
-      )}
+      className="fixed top-0 left-0 right-0 z-50 py-2 sm:py-3 md:py-4 transition-all duration-300 bg-white/95 dark:bg-gray-900 backdrop-blur-md shadow-sm dark:shadow-gray-800/20"
     >
       <div className="container flex items-center justify-between px-4 sm:px-6 lg:px-8">
         <button 

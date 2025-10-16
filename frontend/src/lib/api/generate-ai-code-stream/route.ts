@@ -959,7 +959,7 @@ MORPH FAST APPLY MODE (EDIT-ONLY):
           }
           
           // Use backend file cache instead of frontend-provided files
-          let backendFiles = global.sandboxState?.fileCache?.files || {};
+          let backendFiles: Record<string, { content: string; lastModified: number }> = global.sandboxState?.fileCache?.files || {};
           let hasBackendFiles = Object.keys(backendFiles).length > 0;
           
           console.log('[generate-ai-code-stream] Backend file cache status:');

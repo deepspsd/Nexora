@@ -21,6 +21,7 @@ sqlalchemy==2.0.25
 
 # AI & ML
 openai==1.10.0
+huggingface-hub==0.20.3
 
 # Utilities
 python-multipart==0.0.6
@@ -66,3 +67,9 @@ requests==2.31.0  # Already included above
 # File Processing
 # zipfile and tempfile are built-in Python modules
 # Additional file processing utilities can be added here if needed
+
+# Quick Fixes - Security & Performance
+slowapi==0.1.9
+redis==5.0.1
+bleach==6.1.0
+sentry-sdk[fastapi]==1.40.0

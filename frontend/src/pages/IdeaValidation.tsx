@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import Navbar from "@/components/Navbar";
+import Breadcrumbs from "@/components/Breadcrumbs";
 import { cn } from "@/lib/utils";
 import { 
   Lightbulb, 
@@ -19,6 +20,9 @@ import {
   Zap
 } from "lucide-react";
 import { validateIdea, type IdeaValidationResponse, downloadValidationReport } from "@/lib/api";
+import { apiPost } from "@/lib/api-client";
+import { generateValidationBarChart, generateRadarChart } from "@/lib/chartUtils";
+import { exportValidationPDF } from "@/lib/pdfExport";
 
 const IdeaValidation = () => {
   const navigate = useNavigate();
@@ -27,6 +31,8 @@ const IdeaValidation = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [validationResult, setValidationResult] = useState<IdeaValidationResponse | null>(null);
   const [error, setError] = useState("");
+  const [barChartUrl, setBarChartUrl] = useState<string>("");
+  const [radarChartUrl, setRadarChartUrl] = useState<string>("");
 
   const handleValidate = async () => {
     if (!idea.trim()) {
@@ -45,6 +51,27 @@ const IdeaValidation = () => {
       });
 
       setValidationResult(result);
+      
+      // Validation scores received successfully
+      // Scores: overall, feasibility, novelty, scalability.overall,
+      setValidationResult(result);
+      
+      // Generate chart URLs with actual API scores (no defaults)
+      const barChart = generateValidationBarChart({
+        feasibility: result.ai_feasibility_score.feasibility,
+        scalability: result.ai_feasibility_score.scalability,
+        marketDemand: result.problem_solution_fit?.trend_score ?? result.ai_feasibility_score.overall,
+        innovation: result.ai_feasibility_score.novelty
+      });
+      const radarChart = generateRadarChart({
+        marketPotential: result.target_audience?.fit_score ?? result.ai_feasibility_score.overall,
+        feasibility: result.ai_feasibility_score.feasibility,
+        innovation: result.ai_feasibility_score.novelty,
+        scalability: result.ai_feasibility_score.scalability,
+        marketDemand: result.problem_solution_fit?.trend_score ?? result.ai_feasibility_score.overall
+      });
+      setBarChartUrl(barChart);
+      setRadarChartUrl(radarChart);
     } catch (err: any) {
       setError(err.message || "Failed to validate idea. Please try again.");
       console.error("Validation error:", err);
@@ -54,20 +81,52 @@ const IdeaValidation = () => {
   };
 
   const handleDownloadReport = async () => {
-    if (!validationResult?.validation_id) return;
+    if (!validationResult) return;
 
     try {
-      const blob = await downloadValidationReport(validationResult.validation_id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `idea-validation-${validationResult.validation_id}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      // Use the enhanced PDF export with charts
+      const validationData = {
+        score: {
+          overall: validationResult.ai_feasibility_score.overall,
+          feasibility: validationResult.ai_feasibility_score.feasibility,
+          scalability: validationResult.ai_feasibility_score.scalability,
+          marketDemand: validationResult.problem_solution_fit?.trend_score ?? validationResult.ai_feasibility_score.overall,
+          innovation: validationResult.ai_feasibility_score.novelty,
+          marketPotential: validationResult.target_audience?.fit_score ?? validationResult.ai_feasibility_score.overall
+        },
+        improvedIdea: validationResult.summary,
+        strengths: validationResult.competitors.slice(0, 3).map(c => `Low competition from ${c.name}`) || [],
+        weaknesses: validationResult.risks.map(r => r.risk) || [],
+        recommendations: [validationResult.summary_recommendation],
+        marketSize: validationResult.target_audience?.total_addressable_market || "Not specified",
+        targetAudience: validationResult.target_audience?.segments.map(s => s.name).join(", ") || "Not specified",
+        competitorInsights: validationResult.competitors.slice(0, 3).map(c => ({
+          competitor: c.name,
+          strengths: c.strengths.join(", "),
+          weaknesses: c.weaknesses.join(", "),
+          opportunity: `${100 - c.overlap_score}% differentiation opportunity`
+        }))
+      };
+      
+      await exportValidationPDF(validationData, { idea, problem: industry });
     } catch (err) {
       console.error("Error downloading report:", err);
+      // Fallback to backend PDF if available
+      if (validationResult.validation_id) {
+        try {
+          const blob = await downloadValidationReport(validationResult.validation_id);
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `idea-validation-${validationResult.validation_id}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        } catch (fallbackErr) {
+          console.error("Fallback download failed:", fallbackErr);
+        }
+      }
     }
   };
 
@@ -88,6 +147,7 @@ const IdeaValidation = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-yellow-50 via-white to-orange-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       <Navbar />
+      <Breadcrumbs />
       
       <main className="pt-24 pb-16 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
@@ -279,6 +339,31 @@ const IdeaValidation = () => {
                   {validationResult.ai_feasibility_score.reasoning}
                 </p>
               </motion.div>
+
+              {/* Score Visualizations */}
+              {barChartUrl && radarChartUrl && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.45 }}
+                  className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6"
+                >
+                  <div className="flex items-center space-x-3 mb-6">
+                    <BarChart3 className="w-6 h-6 text-orange-500" />
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">Score Visualizations</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="text-center">
+                      <img src={barChartUrl} alt="Score Analysis" className="w-full rounded-lg shadow-md" />
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">Category Breakdown</p>
+                    </div>
+                    <div className="text-center">
+                      <img src={radarChartUrl} alt="Comprehensive Analysis" className="w-full rounded-lg shadow-md" />
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">Overall Performance</p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
 
               {/* Competitors */}
               {validationResult.competitors && validationResult.competitors.length > 0 && (

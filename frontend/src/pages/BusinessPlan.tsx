@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import Navbar from "@/components/Navbar";
+import Breadcrumbs from "@/components/Breadcrumbs";
 import { cn } from "@/lib/utils";
 import { 
   FileText, 
@@ -24,6 +25,7 @@ import {
   type BusinessPlanResponse, 
   type LeanCanvasBlock 
 } from "@/lib/api";
+import { apiPost, APIError } from "@/lib/api-client";
 
 const BusinessPlan = () => {
   const navigate = useNavigate();
@@ -54,20 +56,43 @@ const BusinessPlan = () => {
 
     try {
       const userId = localStorage.getItem("userId");
-      const result = await createBusinessPlan({
-        idea: formData.idea,
-        industry: formData.industry,
-        target_market: formData.target_market,
-        business_model: formData.business_model,
-        region: formData.region,
-        budget: formData.budget,
-        export_formats: ["pdf", "docx"],
-        userId: userId || undefined
-      });
+      
+      // Use enhanced API client with retry logic for better reliability
+      const result = await apiPost<BusinessPlanResponse>(
+        "/api/business-plan/create",
+        {
+          idea: formData.idea,
+          industry: formData.industry,
+          target_market: formData.target_market,
+          business_model: formData.business_model,
+          region: formData.region,
+          budget: formData.budget,
+          export_formats: ["pdf", "docx"],
+          userId: userId || undefined
+        },
+        { maxRetries: 2, retryDelay: 2000 }
+      );
 
       setBusinessPlan(result);
     } catch (err: any) {
-      setError(err.message || "Failed to generate business plan. Please try again.");
+      let errorMessage = "Failed to generate business plan. Please try again.";
+      
+      if (err instanceof APIError) {
+        if (err.status === 429) {
+          errorMessage = "Too many requests. Please wait a moment and try again.";
+        } else if (err.status === 401) {
+          errorMessage = "Please log in to continue.";
+          setTimeout(() => navigate("/login"), 2000);
+        } else if (err.isRetryable) {
+          errorMessage = "Server is temporarily unavailable. Retrying...";
+        } else {
+          errorMessage = err.message;
+        }
+      } else {
+        errorMessage = err.message || errorMessage;
+      }
+      
+      setError(errorMessage);
       console.error("Business plan error:", err);
     } finally {
       setIsGenerating(false);
@@ -94,6 +119,7 @@ const BusinessPlan = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-pink-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       <Navbar />
+      <Breadcrumbs />
       
       <main className="pt-24 pb-16 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">

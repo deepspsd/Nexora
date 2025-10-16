@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import Navbar from "@/components/Navbar";
+import Breadcrumbs from "@/components/Breadcrumbs";
 import { 
   ArrowLeft, 
   Users, 
@@ -187,9 +188,10 @@ const TeamCollaboration = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       {/* Navbar */}
       <Navbar />
+      <Breadcrumbs />
 
       {/* Main Content */}
       <main className="pt-24 pb-16 px-4 sm:px-6 lg:px-8">

@@ -232,8 +232,7 @@ class FirecrawlClient:
         }
         
         payload = {
-            "url": url,
-            "formats": ["markdown", "html"]
+            "url": url
         }
         
         try:
@@ -265,8 +264,7 @@ class FirecrawlClient:
         
         payload = {
             "query": query,
-            "limit": limit,
-            "formats": ["markdown"]
+            "limit": limit
         }
         
         try:
@@ -357,20 +355,22 @@ class IdeaValidationAgent:
         Returns scores from 0-100 for each dimension
         """
         
-        system_prompt = """You are a senior VC analyst and startup advisor with 15+ years of experience.
-Evaluate startup ideas objectively using data-driven metrics.
+        system_prompt = """You are an ELITE VC analyst and startup advisor with 15+ years of experience evaluating unicorn startups.
+Evaluate startup ideas with EXCEPTIONAL precision using data-driven metrics and market intelligence.
 
-Scoring criteria:
-- Feasibility (0-100): Technical viability, resource requirements, time to market
-- Novelty (0-100): Uniqueness, innovation level, differentiation from existing solutions
-- Scalability (0-100): Growth potential, market size, unit economics
+Scoring criteria (0-100):
+- Feasibility: Technical viability, resource requirements, time to market, execution complexity
+- Novelty: Uniqueness, innovation level, IP potential, differentiation from existing solutions
+- Scalability: Growth potential, TAM size, unit economics, network effects, viral coefficient
+
+Be HONEST and RIGOROUS. A score of 80+ means exceptional potential. 60-79 is good. 40-59 is average. Below 40 needs major pivots.
 
 Return ONLY valid JSON with this exact structure:
 {
   "feasibility": <0-100>,
   "novelty": <0-100>,
   "scalability": <0-100>,
-  "reasoning": "<brief explanation>"
+  "reasoning": "<detailed explanation with specific insights>"
 }"""
 
         user_prompt = f"""Analyze this startup idea and provide feasibility scores:
@@ -395,12 +395,13 @@ Return scores (0-100) and reasoning in JSON format."""
             # Parse JSON response
             data = json.loads(response)
             
-            # Calculate weighted overall score
-            feasibility = int(data.get("feasibility", 50))
-            novelty = int(data.get("novelty", 50))
-            scalability = int(data.get("scalability", 50))
+            # Calculate weighted overall score with enhanced formula
+            feasibility = max(0, min(100, int(data.get("feasibility", 50))))
+            novelty = max(0, min(100, int(data.get("novelty", 50))))
+            scalability = max(0, min(100, int(data.get("scalability", 50))))
             
             # Weighted average: feasibility 40%, scalability 35%, novelty 25%
+            # This prioritizes execution ability and market size over pure innovation
             overall = int(feasibility * 0.4 + scalability * 0.35 + novelty * 0.25)
             
             return FeasibilityScore(

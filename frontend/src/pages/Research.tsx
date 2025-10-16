@@ -2,6 +2,9 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import Navbar from "@/components/Navbar";
+import Breadcrumbs from "@/components/Breadcrumbs";
+import { apiPost, APIError } from "@/lib/api-client";
+import { conductMarketResearch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { 
   ArrowLeft, 
@@ -194,15 +197,18 @@ const Research = () => {
     }
 
     setIsAnalyzing(true);
+    setAnalysisProgress(0);
 
     try {
-      const response = await fetch("http://localhost:8000/api/marketResearch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("token")}`
-        },
-        body: JSON.stringify({
+      // Simulate progress
+      const progressInterval = setInterval(() => {
+        setAnalysisProgress(prev => Math.min(prev + 10, 90));
+      }, 500);
+
+      // Use enhanced API client with retry logic
+      const result = await apiPost(
+        "/api/marketResearch",
+        {
           industry: formData.industry,
           targetMarket: formData.targetMarket,
           region: formData.region,
@@ -211,15 +217,11 @@ const Research = () => {
           budget: formData.budget,
           problem: formData.problem || improvedIdea,
           userId: localStorage.getItem("userId")
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to conduct market research");
-      }
-
-      const result = await response.json();
+        },
+        { maxRetries: 2, retryDelay: 2000 }
+      );
+      
+      clearInterval(progressInterval);
       
       // Transform the response to match our expected structure
       const transformedResults = {
@@ -242,7 +244,24 @@ const Research = () => {
       }, 500);
     } catch (error: any) {
       console.error("Market research error:", error);
-      alert(error.message || "Failed to conduct market research. Please try again.");
+      
+      let errorMessage = "Failed to conduct market research. Please try again.";
+      
+      if (error instanceof APIError) {
+        if (error.status === 429) {
+          errorMessage = "Too many requests. Please wait a moment and try again.";
+        } else if (error.status === 401) {
+          errorMessage = "Please log in to continue.";
+          setTimeout(() => navigate("/login"), 2000);
+        } else if (error.isRetryable) {
+          errorMessage = "Server is temporarily unavailable. The request will be retried automatically.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      alert(errorMessage);
+      setAnalysisProgress(0);
     } finally {
       setIsAnalyzing(false);
     }
@@ -327,9 +346,19 @@ const Research = () => {
     }));
   };
 
-  const exportAsPDF = () => {
-    console.log("Exporting as PDF...");
-    // Implementation for PDF export
+  const exportAsPDF = async () => {
+    try {
+      if (!results) {
+        alert("No research data to export");
+        return;
+      }
+      
+      // In production, call API to generate PDF
+      // const pdfBlob = await apiPost('/market-research/export-pdf', results);
+      alert("PDF export will be available soon. For now, you can copy the research data.");
+    } catch (error) {
+      alert("Failed to export PDF. Please try again later.");
+    }
   };
 
   const getMarketSizeChartData = () => {
@@ -386,8 +415,9 @@ const Research = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-900">
+    <div className="min-h-screen bg-gradient-to-br from-cyan-50 via-white to-blue-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       <Navbar />
+      <Breadcrumbs />
       {/* Header */}
       <header className="fixed top-16 left-0 right-0 z-40 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md shadow-sm">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4">

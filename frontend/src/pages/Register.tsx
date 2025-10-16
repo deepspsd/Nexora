@@ -1,8 +1,10 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { register } from "@/lib/api";
+import { apiPost, APIError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { Mail, Lock, User, ArrowRight, Eye, EyeOff, Sparkles } from "lucide-react";
-import { register, RegisterCredentials } from "@/lib/api";
+import { RegisterCredentials } from "@/lib/api";
 
 const Register = () => {
   const navigate = useNavigate();
@@ -36,34 +38,45 @@ const Register = () => {
     }
 
     try {
-      const response = await register({
-        name: formData.name,
-        email: formData.email,
-        password: formData.password
-      });
-      
-      if (response.status === "success" && response.user) {
-        // Store user data in localStorage
+      // Use enhanced API client with retry logic
+      const response = await apiPost(
+        "/auth/register",
+        {
+          name: formData.name,
+          email: formData.email,
+          password: formData.password
+        },
+        { maxRetries: 2, retryDelay: 1000 }
+      );
+
+      if (response.token && response.user) {
+        localStorage.setItem("token", response.token);
         localStorage.setItem("userId", response.user.id);
         localStorage.setItem("userName", response.user.name);
         localStorage.setItem("userEmail", response.user.email);
         localStorage.setItem("userCredits", response.user.credits.toString());
         localStorage.setItem("userSubscription", response.user.subscription_tier);
-        localStorage.setItem("authToken", response.token);
         
-        // Navigate to dashboard
         navigate("/dashboard");
-      } else {
-        setError(response.message || "Registration failed");
       }
-    } catch (error: any) {
-      console.error("Registration error:", error);
-      // Handle API error messages
-      if (error.message) {
-        setError(error.message);
+    } catch (err: any) {
+      let errorMessage = "Registration failed. Please try again.";
+      
+      if (err instanceof APIError) {
+        if (err.status === 409) {
+          errorMessage = "Email already exists. Please use a different email or login.";
+        } else if (err.status === 429) {
+          errorMessage = "Too many registration attempts. Please wait a moment and try again.";
+        } else if (err.isRetryable) {
+          errorMessage = "Server is temporarily unavailable. Please try again.";
+        } else {
+          errorMessage = err.message;
+        }
       } else {
-        setError("Failed to register. Please try again.");
+        errorMessage = err.message || errorMessage;
       }
+      
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }

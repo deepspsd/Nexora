@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "@/components/Navbar";
+import Breadcrumbs from "@/components/Breadcrumbs";
 import Footer from "@/components/Footer";
 
 const Help = () => {
@@ -146,6 +147,7 @@ const Help = () => {
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900">
       <Navbar />
+      <Breadcrumbs />
       
       {/* Hero Section */}
       <section className="pt-24 pb-16 bg-gradient-to-br from-white via-gray-50 to-pulse-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">

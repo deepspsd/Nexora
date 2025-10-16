@@ -187,7 +187,10 @@ class GroqClient:
             "model": model or self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens
+            "max_tokens": max_tokens,
+            "top_p": 0.95,  # Nucleus sampling for better quality
+            "frequency_penalty": 0.1,  # Reduce repetition
+            "presence_penalty": 0.1  # Encourage diverse content
         }
         
         if json_mode:

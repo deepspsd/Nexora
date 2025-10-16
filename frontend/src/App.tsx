@@ -1,20 +1,23 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { HelmetProvider } from "react-helmet-async";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import AIWidget from "@/components/AIWidget";
 import StickyCtaBar from "@/components/StickyCtaBar";
 import { NotificationProvider } from "@/components/NotificationSystem";
+import LoadingFallback from "@/components/LoadingFallback";
+import { initPlausible, analytics } from "@/lib/analytics/plausible";
 
 // Lazy load pages for better performance
 const Index = lazy(() => import("./pages/Index"));
 const Login = lazy(() => import("./pages/Login"));
 const Register = lazy(() => import("./pages/Register"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
-const MVPDevelopment = lazy(() => import("./pages/MVPDevelopment"));
+const MVPBuilder = lazy(() => import("./pages/MVPBuilder"));
 const Research = lazy(() => import("./pages/Research"));
 const BusinessPlan = lazy(() => import("./pages/BusinessPlan"));
 const IdeaValidation = lazy(() => import("./pages/IdeaValidation"));
@@ -29,7 +32,10 @@ const Help = lazy(() => import("./pages/Help"));
 const Privacy = lazy(() => import("./pages/Privacy"));
 const Terms = lazy(() => import("./pages/Terms"));
 const Settings = lazy(() => import("./pages/Settings"));
+const APIDocs = lazy(() => import("./pages/APIDocs"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const GoogleCallback = lazy(() => import("./pages/auth/GoogleCallback"));
+const GithubCallback = lazy(() => import("./pages/auth/GithubCallback"));
 import ProtectedRoute from "./components/ProtectedRoute";
 
 // Error fallback component for react-error-boundary (if available)
@@ -75,15 +81,34 @@ const queryClient = new QueryClient({
   },
 });
 
-const App = () => (
-  <ErrorBoundary>
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <NotificationProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-          <Suspense fallback={<PageLoader />}>
+// Analytics tracker component
+const AnalyticsTracker = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    analytics.trackPageView();
+  }, [location]);
+
+  return null;
+};
+
+const App = () => {
+  // Initialize analytics on app mount
+  useEffect(() => {
+    initPlausible();
+  }, []);
+
+  return (
+    <ErrorBoundary>
+      <HelmetProvider>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <NotificationProvider>
+              <Toaster />
+              <Sonner />
+              <BrowserRouter>
+                <AnalyticsTracker />
+                <Suspense fallback={<LoadingFallback />}>
             <Routes>
               {/* Public Routes */}
               <Route path="/" element={<Index />} />
@@ -95,6 +120,11 @@ const App = () => (
               <Route path="/help" element={<Help />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/terms" element={<Terms />} />
+              <Route path="/api-docs" element={<APIDocs />} />
+              
+              {/* OAuth Callback Routes */}
+              <Route path="/auth/google/callback" element={<GoogleCallback />} />
+              <Route path="/auth/github/callback" element={<GithubCallback />} />
               
               {/* Protected Routes - Require Authentication */}
               <Route 
@@ -117,7 +147,7 @@ const App = () => (
                 path="/mvp-development" 
                 element={
                   <ProtectedRoute>
-                    <MVPDevelopment />
+                    <MVPBuilder />
                   </ProtectedRoute>
                 } 
               />
@@ -162,19 +192,6 @@ const App = () => (
                 } 
               />
               <Route 
-                path="/intelligent-chat" 
-                element={
-                  <ProtectedRoute>
-                    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
-                      <div className="text-center">
-                        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Intelligent Chat</h1>
-                        <p className="text-gray-600 dark:text-gray-400">Coming Soon</p>
-                      </div>
-                    </div>
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
                 path="/profile" 
                 element={
                   <ProtectedRoute>
@@ -196,13 +213,15 @@ const App = () => (
             </Routes>
           </Suspense>
           
-          {/* Global Components */}
-          <StickyCtaBar />
-        </BrowserRouter>
-        </NotificationProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
-  </ErrorBoundary>
-);
+                {/* Global Components */}
+                <StickyCtaBar />
+              </BrowserRouter>
+            </NotificationProvider>
+          </TooltipProvider>
+        </QueryClientProvider>
+      </HelmetProvider>
+    </ErrorBoundary>
+  );
+};
 
 export default App;
