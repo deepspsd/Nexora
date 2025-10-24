@@ -34,8 +34,6 @@ POOL_CONFIG = {
     'pool_name': 'nexora_pool',
     'pool_size': 20,  # Increased from 5 for better performance
     'pool_reset_session': True,
-    'pool_pre_ping': True,  # Verify connections before use
-    'pool_recycle': 3600,  # Recycle connections every hour
 }
 
 # Global connection pool

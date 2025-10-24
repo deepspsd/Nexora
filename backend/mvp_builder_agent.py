@@ -25,7 +25,11 @@ from enum import Enum
 from dataclasses import dataclass
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from prompt_templates import build_dynamic_prompt, detect_prompt_type
+from prompt_templates_html import (
+    build_dynamic_prompt,
+    detect_prompt_type,
+    get_html_system_prompt
+)
 
 # Load environment variables
 load_dotenv()
@@ -187,20 +191,34 @@ class MVPBuilderAgent:
             AIModel.DEEPSEEK: {
                 "base_url": "https://router.huggingface.co/v1",
                 "model": "deepseek-ai/DeepSeek-V3.1",
-                "max_tokens": 8000,
+                "max_tokens": 32000,  # Hugging Face limit is 32768, using 32000 for safety
                 "retry_on_rate_limit": True,
                 "retry_delay": 5,
-                "max_retries": 3
+                "max_retries": 3,
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "frequency_penalty": 0.0,  # Set to 0 to allow necessary repetition in code
+                "presence_penalty": 0.0,  # Set to 0 to allow similar patterns across files
+                "stream_chunk_size": 512,  # Optimal chunk size for streaming
+                "stop": None  # Don't use stop sequences - let model complete fully
             },
             AIModel.GROQ: {
                 "base_url": "https://api.groq.com/openai/v1",
                 "model": "llama-3.3-70b-versatile",  # Updated from deprecated llama-3.1-70b-versatile
-                "max_tokens": 4000
+                "max_tokens": 8000,  # Increased from 4000
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "frequency_penalty": 0.2,
+                "presence_penalty": 0.2
             },
             AIModel.KIMI: {
                 "base_url": "https://api.moonshot.cn/v1",
                 "model": "moonshot-v1-32k",
-                "max_tokens": 4000
+                "max_tokens": 8000,  # Increased from 4000
+                "temperature": 0.7,
+                "top_p": 0.95,
+                "frequency_penalty": 0.2,
+                "presence_penalty": 0.2
             }
         }
         
@@ -247,11 +265,11 @@ class MVPBuilderAgent:
                 "model": config["model"],
                 "messages": messages,
                 "max_tokens": config["max_tokens"],
-                "temperature": 0.7,
+                "temperature": config.get("temperature", 0.7),
                 "stream": stream,
-                "top_p": 0.95,  # Nucleus sampling for better quality
-                "frequency_penalty": 0.1,  # Reduce repetition
-                "presence_penalty": 0.1  # Encourage diverse responses
+                "top_p": config.get("top_p", 0.95),
+                "frequency_penalty": config.get("frequency_penalty", 0.2),
+                "presence_penalty": config.get("presence_penalty", 0.2)
             }
             
             async with aiohttp.ClientSession() as session:
@@ -284,20 +302,41 @@ class MVPBuilderAgent:
                         raise Exception(f"AI API error: {error_text}")
                     
                     if stream:
-                        async for line in response.content:
-                            line = line.decode('utf-8').strip()
-                            if line.startswith('data: '):
-                                data = line[6:]
-                                if data == '[DONE]':
-                                    break
-                                try:
-                                    json_data = json.loads(data)
-                                    if 'choices' in json_data and json_data['choices']:
-                                        delta = json_data['choices'][0].get('delta', {})
-                                        if 'content' in delta:
-                                            yield delta['content']
-                                except json.JSONDecodeError:
-                                    continue
+                        total_chunks = 0
+                        total_chars = 0
+                        try:
+                            async for line in response.content:
+                                line = line.decode('utf-8').strip()
+                                if line.startswith('data: '):
+                                    data = line[6:]
+                                    if data == '[DONE]':
+                                        logger.info(f"✅ Stream completed - {total_chunks} chunks, {total_chars} characters")
+                                        break
+                                    try:
+                                        json_data = json.loads(data)
+                                        if 'choices' in json_data and json_data['choices']:
+                                            delta = json_data['choices'][0].get('delta', {})
+                                            if 'content' in delta:
+                                                content = delta['content']
+                                                total_chunks += 1
+                                                total_chars += len(content)
+                                                yield content
+                                            
+                                            # Check for finish_reason to detect early termination
+                                            finish_reason = json_data['choices'][0].get('finish_reason')
+                                            if finish_reason:
+                                                if finish_reason == 'length':
+                                                    logger.error(f"🚨 Stream truncated due to max_tokens limit! Increase max_tokens.")
+                                                elif finish_reason != 'stop':
+                                                    logger.warning(f"⚠️ Stream finished with reason: {finish_reason} (expected 'stop')")
+                                                else:
+                                                    logger.info(f"✅ Stream completed normally (finish_reason: stop)")
+                                    except json.JSONDecodeError as e:
+                                        logger.debug(f"JSON decode error in stream: {e}")
+                                        continue
+                        except asyncio.CancelledError:
+                            logger.warning(f"Stream cancelled for {model.value}")
+                            return
                     else:
                         data = await response.json()
                         if 'choices' in data and data['choices']:
@@ -311,10 +350,7 @@ class MVPBuilderAgent:
             # Determine available fallback models
             fallback_models = []
             if model == AIModel.DEEPSEEK:
-                if self.groq_api_key:
-                    fallback_models.append(AIModel.GROQ)
-                if self.kimi_api_key:
-                    fallback_models.append(AIModel.KIMI)
+                pass
             elif model == AIModel.GROQ:
                 if self.kimi_api_key:
                     fallback_models.append(AIModel.KIMI)
@@ -592,15 +628,32 @@ class MVPBuilderAgent:
                     scraped_content = context['scraped_content'][:1000]  # Limit size
                 target_files = context.get('target_files', [])
             
-            # Build dynamic system prompt
-            system_prompt = build_dynamic_prompt(
-                user_prompt=prompt,
-                is_edit=is_edit,
-                target_files=target_files,
-                conversation_messages=conversation_messages,
-                conversation_edits=conversation_edits,
-                scraped_content=scraped_content
-            )
+            # Use HTML-optimized system prompt for better completion
+            # For edit mode, still use dynamic prompt for surgical edits
+            if is_edit and target_files:
+                system_prompt = build_dynamic_prompt(
+                    user_prompt=prompt,
+                    is_edit=is_edit,
+                    target_files=target_files,
+                    conversation_messages=conversation_messages,
+                    conversation_edits=conversation_edits,
+                    scraped_content=scraped_content
+                )
+            else:
+                # For new code generation, use HTML-optimized prompt
+                system_prompt = get_html_system_prompt()
+                
+                # Add conversation context if available
+                if conversation_messages:
+                    system_prompt += "\n\n## Recent Conversation:\n"
+                    for msg in conversation_messages[-3:]:
+                        role = msg.get('role', 'user')
+                        content = msg.get('content', '')[:100]
+                        system_prompt += f"- {role}: {content}...\n"
+                
+                # Add scraped content if available
+                if scraped_content:
+                    system_prompt += f"\n\n## Reference Content:\n{scraped_content}\n"
             
             # Send initial status with detected intent
             yield {

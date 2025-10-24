@@ -34,6 +34,9 @@ const Terms = lazy(() => import("./pages/Terms"));
 const Settings = lazy(() => import("./pages/Settings"));
 const APIDocs = lazy(() => import("./pages/APIDocs"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const Error500 = lazy(() => import("./pages/Error500"));
+const Error403 = lazy(() => import("./pages/Error403"));
+const Error503 = lazy(() => import("./pages/Error503"));
 const GoogleCallback = lazy(() => import("./pages/auth/GoogleCallback"));
 const GithubCallback = lazy(() => import("./pages/auth/GithubCallback"));
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -208,7 +211,12 @@ const App = () => {
                 } 
               />
               
-              {/* Catch-all route */}
+              {/* Error Pages */}
+              <Route path="/error/500" element={<Error500 />} />
+              <Route path="/error/403" element={<Error403 />} />
+              <Route path="/error/503" element={<Error503 />} />
+              
+              {/* 404 Page */}
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

@@ -1,14 +1,21 @@
 import React, { useState, useEffect } from "react";
 import { Check, X, Star, Zap, Crown, Rocket, ArrowRight, Shield, Clock, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
-// Mock Stripe for now - will be replaced with actual Stripe integration
-const loadStripe = async (key: string) => {
-  console.log('Stripe integration pending - using mock for now');
-  return null;
-};
+import { useNavigate } from "react-router-dom";
 
-// Initialize Stripe (mock) - Using Vite env variables
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_...');
+// API Base URL
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// Load Razorpay script
+const loadRazorpay = () => {
+  return new Promise((resolve) => {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+};
 
 interface PricingPlan {
   id: string;
@@ -30,9 +37,30 @@ interface PricingPlan {
 }
 
 const PricingSection = () => {
+  const navigate = useNavigate();
   const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly');
   const [loading, setLoading] = useState<string | null>(null);
   const [showComparison, setShowComparison] = useState(false);
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    // Get user from localStorage (stored as separate items)
+    const userId = localStorage.getItem('userId');
+    const userName = localStorage.getItem('userName');
+    const userEmail = localStorage.getItem('userEmail');
+    const userCredits = localStorage.getItem('userCredits');
+    const userSubscription = localStorage.getItem('userSubscription');
+    
+    if (userId && userEmail) {
+      setUser({
+        id: userId,
+        name: userName || '',
+        email: userEmail,
+        credits: parseInt(userCredits || '0'),
+        subscription_tier: userSubscription || 'free'
+      });
+    }
+  }, []);
 
   const plans: PricingPlan[] = [
     {
@@ -65,8 +93,8 @@ const PricingSection = () => {
       id: 'pro',
       name: 'Professional',
       description: 'For serious entrepreneurs building multiple projects',
-      price: billingPeriod === 'monthly' ? 49 : 39,
-      originalPrice: billingPeriod === 'monthly' ? 79 : 59,
+      price: billingPeriod === 'monthly' ? 78 : 65,
+      originalPrice: billingPeriod === 'monthly' ? 99 : 79,
       period: billingPeriod === 'monthly' ? '/month' : '/month (billed yearly)',
       icon: Zap,
       color: 'text-pulse-600',
@@ -93,7 +121,7 @@ const PricingSection = () => {
       id: 'enterprise',
       name: 'Enterprise',
       description: 'For teams and organizations scaling fast',
-      price: billingPeriod === 'monthly' ? 199 : 159,
+      price: billingPeriod === 'monthly' ? 199 : 165,
       period: billingPeriod === 'monthly' ? '/month' : '/month (billed yearly)',
       icon: Crown,
       color: 'text-purple-600',
@@ -121,52 +149,151 @@ const PricingSection = () => {
   const handleSubscribe = async (plan: PricingPlan) => {
     if (plan.id === 'free') {
       // Handle free plan signup
-      window.location.href = '/register';
+      navigate('/register');
       return;
     }
 
     if (plan.enterprise) {
       // Handle enterprise contact
-      window.location.href = '/contact';
+      navigate('/contact');
+      return;
+    }
+
+    // Check if user is logged in
+    if (!user) {
+      alert('Please login to subscribe');
+      navigate('/login');
       return;
     }
 
     setLoading(plan.id);
     
     try {
-      const stripe = await stripePromise;
-      if (!stripe) throw new Error('Stripe failed to load');
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Please login to continue');
+        navigate('/login');
+        return;
+      }
 
-      // Create checkout session
-      const response = await fetch('/api/create-checkout-session', {
+      // Calculate credits based on plan
+      const creditsMap: { [key: string]: number } = {
+        'pro': 500,
+        'enterprise': 2000
+      };
+      const credits = creditsMap[plan.id] || 100;
+
+      // Create payment order
+      const orderResponse = await fetch(`${API_BASE_URL}/api/payment/create-order`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          priceId: plan.stripePriceId,
-          planName: plan.name,
+          amount: plan.price,
+          currency: 'INR',
+          user_id: user.id,
+          credits: credits
         }),
       });
 
-      const session = await response.json();
-
-      // Redirect to Stripe Checkout
-      const result = await stripe.redirectToCheckout({
-        sessionId: session.id,
-      });
-
-      if (result.error) {
-        console.error('Stripe error:', result.error);
+      if (!orderResponse.ok) {
+        throw new Error('Failed to create payment order');
       }
+
+      const orderData = await orderResponse.json();
+      const order = orderData.order;
+
+      // Load Razorpay
+      const razorpayLoaded = await loadRazorpay();
+      if (!razorpayLoaded) {
+        alert('Failed to load payment gateway. Please try again.');
+        return;
+      }
+
+      // Initialize Razorpay payment
+      const options = {
+        key: order.key_id,
+        amount: order.amount * 100, // Convert to paise
+        currency: order.currency,
+        name: 'NEXORA',
+        description: `${plan.name} Subscription`,
+        order_id: order.order_id,
+        handler: async function (response: any) {
+          try {
+            // Verify payment
+            const verifyResponse = await fetch(`${API_BASE_URL}/api/payment/verify`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                provider: 'razorpay',
+                payment_id: response.razorpay_payment_id,
+                order_id: response.razorpay_order_id,
+                signature: response.razorpay_signature,
+                user_id: user.id,
+                credits: credits
+              }),
+            });
+
+            if (verifyResponse.ok) {
+              // Upgrade subscription
+              const upgradeResponse = await fetch(`${API_BASE_URL}/api/subscription/upgrade`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                  user_id: user.id,
+                  tier: plan.id,
+                  payment_id: response.razorpay_payment_id
+                }),
+              });
+
+              if (upgradeResponse.ok) {
+                alert('Payment successful! Your subscription has been upgraded.');
+                navigate('/dashboard');
+              } else {
+                alert('Payment verified but subscription upgrade failed. Please contact support.');
+              }
+            } else {
+              alert('Payment verification failed. Please contact support.');
+            }
+          } catch (error) {
+            console.error('Payment verification error:', error);
+            alert('Payment verification failed. Please contact support.');
+          }
+        },
+        prefill: {
+          name: user.name,
+          email: user.email,
+        },
+        theme: {
+          color: '#6366f1'
+        },
+        modal: {
+          ondismiss: function() {
+            setLoading(null);
+          }
+        }
+      };
+
+      const razorpay = new (window as any).Razorpay(options);
+      razorpay.open();
+
     } catch (error) {
       console.error('Subscription error:', error);
+      alert('Failed to initiate payment. Please try again.');
     } finally {
       setLoading(null);
     }
   };
 
-  const yearlyDiscount = Math.round(((49 - 39) / 49) * 100);
+  const yearlyDiscount = Math.round(((78 - 65) / 78) * 100);
 
   return (
     <section className="py-16 md:py-24 bg-gradient-to-br from-white via-gray-50 to-pulse-50 relative overflow-hidden">
@@ -261,11 +388,11 @@ const PricingSection = () => {
                   <div className="mb-6">
                     {plan.originalPrice && (
                       <div className="text-gray-400 line-through text-lg mb-1">
-                        ${plan.originalPrice}{plan.period}
+                        ₹{plan.originalPrice}{plan.period}
                       </div>
                     )}
                     <div className="flex items-baseline justify-center">
-                      <span className="text-5xl font-bold text-gray-900">${plan.price}</span>
+                      <span className="text-5xl font-bold text-gray-900">₹{plan.price}</span>
                       <span className="text-gray-600 ml-2">{plan.period}</span>
                     </div>
                   </div>

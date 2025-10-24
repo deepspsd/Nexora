@@ -26,6 +26,7 @@ huggingface-hub==0.20.3
 # Utilities
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
+PyJWT==2.8.0
 passlib[bcrypt]==1.7.4
 
 # Logging & Monitoring
@@ -53,6 +54,13 @@ python-pptx==0.6.23
 # MVP Builder Dependencies
 aiohttp==3.9.1  # Already included above
 requests==2.31.0  # Already included above
+
+# Quick Fixes
+aiofiles==23.2.1
+
+# Payment Providers
+razorpay==1.4.1
+stripe==7.10.0  # Already included above
 
 # E2B Sandbox Integration
 # e2b==0.15.0  # E2B SDK (if needed for direct integration)

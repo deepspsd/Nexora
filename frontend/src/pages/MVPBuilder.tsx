@@ -37,6 +37,7 @@ import Navbar from "@/components/Navbar";
 import CodeEditor from "@/components/CodeEditor";
 import TemplateSelector from "@/components/TemplateSelector";
 import { UITemplate } from "@/lib/templates/uiTemplates";
+import LivePreviewPanel from "@/components/mvp-builder/LivePreviewPanel";
 
 interface Message {
   id: string;
@@ -85,12 +86,31 @@ const getLanguageFromFileName = (fileName: string): string => {
 };
 
 const MVPBuilder = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Load from localStorage on mount
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const saved = localStorage.getItem('nexora-mvp-messages');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Convert timestamp strings back to Date objects
+      return parsed.map((msg: any) => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp)
+      }));
+    }
+    return [];
+  });
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [sandboxId, setSandboxId] = useState<string>("");
-  const [sandboxUrl, setSandboxUrl] = useState<string>("");
-  const [fileTree, setFileTree] = useState<FileNode[]>([]);
+  const [sandboxId, setSandboxId] = useState<string>(() => {
+    return localStorage.getItem('nexora-sandbox-id') || '';
+  });
+  const [sandboxUrl, setSandboxUrl] = useState<string>(() => {
+    return localStorage.getItem('nexora-sandbox-url') || '';
+  });
+  const [fileTree, setFileTree] = useState<FileNode[]>(() => {
+    const saved = localStorage.getItem('nexora-file-tree');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
   const [showPreview, setShowPreview] = useState(true);
   const [currentStatus, setCurrentStatus] = useState("");
@@ -110,13 +130,29 @@ const MVPBuilder = () => {
   const [searchResults, setSearchResults] = useState<FileNode[]>([]);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<UITemplate | null>(null);
+  const [previewHtml, setPreviewHtml] = useState<string>("");
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Save to localStorage whenever messages change
   useEffect(() => {
+    localStorage.setItem('nexora-mvp-messages', JSON.stringify(messages));
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Save sandbox state to localStorage
+  useEffect(() => {
+    if (sandboxId) localStorage.setItem('nexora-sandbox-id', sandboxId);
+  }, [sandboxId]);
+
+  useEffect(() => {
+    if (sandboxUrl) localStorage.setItem('nexora-sandbox-url', sandboxUrl);
+  }, [sandboxUrl]);
+
+  useEffect(() => {
+    localStorage.setItem('nexora-file-tree', JSON.stringify(fileTree));
+  }, [fileTree]);
 
   // Initialize sandbox on mount
   useEffect(() => {
@@ -239,6 +275,7 @@ const MVPBuilder = () => {
       // Backend handles everything in one stream
       let filesCreated: string[] = [];
       let fullResponse = "";
+      const filesMap: Record<string, string> = {}; // Store file contents
       
       if (reader) {
         while (true) {
@@ -256,16 +293,36 @@ const MVPBuilder = () => {
                 // Handle different event types from backend
                 if (data.type === "content") {
                   fullResponse += data.content;
+                  // Don't show raw code in chat - only update status
+                  // The code will be displayed in the Files section
                   setMessages(prev => prev.map(msg => 
                     msg.id === tempAssistantId 
-                      ? { ...msg, content: `Generating code...\n\n${data.content.substring(0, 300)}...` }
+                      ? { ...msg, content: `🤖 **AI is crafting your application...**\n\n✨ Generating code files...\n📝 Writing components...\n🎨 Styling your app...` }
                       : msg
                   ));
+                } else if (data.type === "warning") {
+                  console.warn("⚠️ Backend warning:", data.message);
+                  setCurrentStatus(`⚠️ ${data.message}`);
                 } else if (data.type === "file_operation") {
                   if (data.status === "completed") {
                     filesCreated.push(data.path);
+                    filesMap[data.path] = data.content || ""; // Store content
                     setFilesGenerated(prev => prev + 1);
                     setCurrentStatus(`✅ Created ${data.path} - ${filesCreated.length} files generated`);
+                    
+                    // Update chat to show file creation progress
+                    setMessages(prev => prev.map(msg => 
+                      msg.id === tempAssistantId 
+                        ? { ...msg, content: `🤖 **Building your application...**\n\n✅ Created ${filesCreated.length} file(s)\n📁 Latest: ${data.path}\n\n⚡ Check the Files panel to see your code!` }
+                        : msg
+                    ));
+                    
+                    // Build and update file tree
+                    const tree = buildFileTree(filesMap);
+                    setFileTree(tree);
+                    
+                    // Generate preview HTML from files
+                    generatePreviewFromFiles(filesMap);
                   } else if (data.status === "processing") {
                     setCurrentStatus(`Creating ${data.path}...`);
                   }
@@ -284,6 +341,10 @@ const MVPBuilder = () => {
                       : msg
                   ));
                   setCurrentStatus("✅ Generation complete! 🎉");
+                  
+                  // Final preview generation
+                  console.log('🎬 Generation complete, final preview generation');
+                  generatePreviewFromFiles(filesMap);
                 }
               } catch (e) {
                 console.debug("Parse error:", e, line);
@@ -494,6 +555,13 @@ const MVPBuilder = () => {
       setFilesGenerated(0);
       setPackagesInstalled([]);
       setErrors([]);
+      setPreviewHtml("");
+      
+      // Clear localStorage
+      localStorage.removeItem('nexora-mvp-messages');
+      localStorage.removeItem('nexora-sandbox-id');
+      localStorage.removeItem('nexora-sandbox-url');
+      localStorage.removeItem('nexora-file-tree');
       
       // Reinitialize sandbox
       await initializeSandbox();
@@ -907,6 +975,156 @@ const MVPBuilder = () => {
     return () => clearTimeout(debounce);
   }, [searchQuery, fileTree]);
 
+  // Generate preview HTML when files change
+  useEffect(() => {
+    if (fileTree.length > 0) {
+      generatePreviewHtml();
+    }
+  }, [fileTree]);
+
+  const generatePreviewFromFiles = (filesMap: Record<string, string>) => {
+    try {
+      console.log('🎨 Generating preview from files:', Object.keys(filesMap));
+      
+      // Find files by checking all paths
+      let appContent = '';
+      let indexHtmlContent = '';
+      let indexCssContent = '';
+      const componentFiles: Record<string, string> = {};
+      
+      Object.entries(filesMap).forEach(([path, content]) => {
+        if (!content) return; // Skip empty files
+        
+        const lowerPath = path.toLowerCase();
+        if (lowerPath.includes('app.jsx') || lowerPath.includes('app.tsx')) {
+          appContent = content;
+          console.log('✅ Found App file:', path);
+        } else if (lowerPath.includes('index.html')) {
+          indexHtmlContent = content;
+          console.log('✅ Found index.html:', path);
+        } else if (lowerPath.includes('index.css') || lowerPath.includes('app.css') || lowerPath.includes('style.css')) {
+          indexCssContent = content;
+          console.log('✅ Found CSS file:', path);
+        } else if ((lowerPath.endsWith('.jsx') || lowerPath.endsWith('.tsx')) && !lowerPath.includes('app.')) {
+          componentFiles[path] = content;
+          console.log('✅ Found component:', path);
+        }
+      });
+
+      if (indexHtmlContent) {
+        console.log('📄 Using index.html directly');
+        setPreviewHtml(indexHtmlContent);
+        return;
+      }
+
+      if (appContent) {
+        console.log('⚛️ Generating preview from React App component');
+      
+      // Extract all component code
+      let componentsCode = '';
+      Object.values(componentFiles).forEach(content => {
+        const cleanedCode = content
+          .replace(/import\s+.*?from\s+['"].*?['"];?\n?/g, '')
+          .replace(/export\s+(default\s+)?/g, '')
+          .replace(/:\s*React\.FC<[^>]*>/g, '')
+          .replace(/:\s*JSX\.Element/g, '')
+          .replace(/interface\s+\w+\s*\{[\s\S]*?\n\}/g, '')
+          .replace(/type\s+\w+\s*=\s*[\s\S]*?;/g, '');
+        componentsCode += cleanedCode + '\n\n';
+      });
+
+      // Clean App component code
+      const cleanAppCode = appContent
+        .replace(/import\s+.*?from\s+['"].*?['"];?\n?/g, '')
+        .replace(/export\s+default\s+/g, '')
+        .replace(/:\s*React\.FC<[^>]*>/g, '')
+        .replace(/:\s*JSX\.Element/g, '')
+        .replace(/interface\s+\w+\s*\{[\s\S]*?\n\}/g, '')
+        .replace(/type\s+\w+\s*=\s*[\s\S]*?;/g, '');
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preview</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/framer-motion@10/dist/framer-motion.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; }
+    ${indexCssContent}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import React from 'https://esm.sh/react@18.2.0';
+    import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
+    import { motion, AnimatePresence } from 'https://esm.sh/framer-motion@10';
+    
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+    
+    // Component definitions
+    ${componentsCode}
+    
+    // Main App component
+    ${cleanAppCode}
+    
+    // Render
+    try {
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(React.createElement(App));
+      console.log('✅ App rendered successfully');
+    } catch (error) {
+      console.error('❌ Render error:', error);
+      document.getElementById('root').innerHTML = '<div style="padding: 40px; text-align: center; font-family: system-ui;"><h2 style="color: #dc2626; margin-bottom: 16px;">Preview Error</h2><p style="color: #6b7280; margin-bottom: 16px;">Failed to render the application.</p><pre style="background: #f3f4f6; padding: 20px; border-radius: 8px; text-align: left; overflow: auto; font-size: 12px;">' + error.message + '</pre></div>';
+    }
+  </script>
+</body>
+</html>`;
+      
+      console.log('✅ Preview HTML generated');
+      setPreviewHtml(html);
+      } else {
+        console.warn('⚠️ No App component or index.html found');
+      }
+    } catch (error) {
+      console.error('❌ Error generating preview:', error);
+    }
+  };
+
+  const generatePreviewHtml = () => {
+    // Legacy function - kept for compatibility
+    const findFile = (nodes: FileNode[], name: string): FileNode | null => {
+      for (const node of nodes) {
+        if (node.type === "file" && node.path.includes(name)) {
+          return node;
+        }
+        if (node.children) {
+          const found = findFile(node.children, name);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const filesMap: Record<string, string> = {};
+    const collectFiles = (nodes: FileNode[]) => {
+      nodes.forEach(node => {
+        if (node.type === "file" && node.content) {
+          filesMap[node.path] = node.content;
+        }
+        if (node.children) {
+          collectFiles(node.children);
+        }
+      });
+    };
+    
+    collectFiles(fileTree);
+    generatePreviewFromFiles(filesMap);
+  };
+
   // ============================================================================
   // Periodic Health Checks & Monitoring
   // ============================================================================
@@ -1267,54 +1485,44 @@ const MVPBuilder = () => {
 
           {/* Right - Preview/Code */}
           {showPreview && (
-            <div className="w-[45%] bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 flex flex-col">
-              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
-                <div className="flex items-center space-x-2">
-                  <Eye className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                  <h3 className="font-semibold text-gray-900 dark:text-white">
-                    {selectedFile ? selectedFile.name : "Preview"}
-                  </h3>
-                </div>
-                <div className="flex items-center space-x-2">
-                  {sandboxUrl && (
-                    <a
-                      href={sandboxUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-                      title="Open in new tab"
+            <div className="w-[55%] bg-white dark:bg-gray-800 border-l border-gray-200 dark:border-gray-700 flex flex-col">
+              {selectedFile ? (
+                <>
+                  <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center space-x-2">
+                      <FileCode className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                      <h3 className="font-semibold text-gray-900 dark:text-white">
+                        {selectedFile.name}
+                      </h3>
+                    </div>
+                    <button
+                      onClick={() => setSelectedFile(null)}
+                      className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors group"
+                      title="Close and return to preview"
                     >
-                      <Maximize2 className="w-4 h-4" />
-                    </a>
-                  )}
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-hidden">
-                {selectedFile ? (
-                  <CodeEditor
-                    value={selectedFile.content || ''}
-                    language={getLanguageFromFileName(selectedFile.name)}
-                    readOnly={true}
-                    height="100%"
-                    fileName={selectedFile.name}
-                    showMinimap={false}
-                  />
-                ) : sandboxUrl ? (
-                  <iframe
-                    src={sandboxUrl}
-                    className="w-full h-full"
-                    title="Preview"
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-full text-gray-400">
-                    <div className="text-center">
-                      <Play className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                      <p>Preview will appear here</p>
+                      <X className="w-5 h-5 text-gray-600 dark:text-gray-400 group-hover:text-red-500" />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-hidden p-4">
+                    <div className="h-full">
+                      <CodeEditor
+                        value={selectedFile.content || ''}
+                        language={getLanguageFromFileName(selectedFile.name)}
+                        readOnly={true}
+                        height="100%"
+                        fileName={selectedFile.name}
+                        showMinimap={false}
+                      />
                     </div>
                   </div>
-                )}
-              </div>
+                </>
+              ) : (
+                <LivePreviewPanel
+                  sandboxUrl={sandboxUrl}
+                  isLoading={isGenerating}
+                  previewHtml={previewHtml}
+                />
+              )}
             </div>
           )}
         </div>

@@ -17,11 +17,34 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel, Field, field_validator, StringConstraints
 from dotenv import load_dotenv
-from passlib.context import CryptContext
 import bleach
+from auth import (
+    create_access_token,
+    create_refresh_token,
+    verify_token as verify_jwt_token,
+    hash_password,
+    verify_password,
+    get_google_oauth_url,
+    get_github_oauth_url,
+    exchange_google_code,
+    exchange_github_code
+)
+from payment import payment_manager, PaymentProvider
+from subscription import SubscriptionManager, SubscriptionTier, get_credit_cost
+from model_router import model_router, TaskType
+from exceptions import (
+    NexoraException,
+    AIServiceException,
+    DatabaseException,
+    AuthenticationException,
+    ValidationException,
+    PaymentException,
+    InsufficientCreditsException
+)
+from env_validator import check_environment_on_startup
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -39,10 +62,11 @@ from mvp_builder_agent import (
 )
 
 # Import Prompt Templates
-from prompt_templates import (
+from prompt_templates_html import (
     build_dynamic_prompt,
     detect_prompt_type,
     get_base_system_prompt,
+    get_html_system_prompt,
     PromptType
 )
 
@@ -88,14 +112,14 @@ if os.getenv("SENTRY_DSN"):
     )
     logger.info("Sentry initialized for error monitoring")
 
-# Initialize password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing is now handled in auth.py
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
 # Global variables
 mvp_builder_agent = None
+subscription_manager = None
 
 # Initialize agents
 idea_validation_agent = None
@@ -105,11 +129,17 @@ pitch_deck_agent = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan event handler for startup and shutdown"""
-    global mvp_builder_agent, idea_validation_agent, business_planning_agent, market_research_agent, pitch_deck_agent
-    
+    """Lifespan context manager for startup and shutdown"""
     # Startup
-    logger.info("Starting up NEXORA API...")
+    logger.info(" Starting NEXORA API...")
+    
+    # Validate environment variables
+    try:
+        check_environment_on_startup()
+    except RuntimeError as e:
+        logger.error(f" Startup validation failed: {e}")
+        # Continue anyway for development, but log the error
+        logger.warning(" Continuing startup despite validation errors (development mode)")
     
     # Initialize database
     try:
@@ -119,6 +149,10 @@ async def lifespan(app: FastAPI):
             logger.info("Database tables created/verified")
     except Exception as e:
         logger.error(f"Failed to initialize database: {str(e)}")
+    
+    # Initialize subscription manager
+    subscription_manager = SubscriptionManager(db)
+    logger.info("Subscription manager initialized")
     
     global mvp_builder_agent
     try:
@@ -253,6 +287,41 @@ class UserLoginRequest(BaseModel):
     password: str = Field(..., description="User password", min_length=6)
 
 
+class RefreshTokenRequest(BaseModel):
+    """Refresh token request"""
+    refresh_token: str = Field(..., description="Refresh token")
+
+
+class PaymentOrderRequest(BaseModel):
+    """Payment order creation request"""
+    amount: float = Field(..., description="Amount to pay")
+    currency: str = Field(default="INR", description="Currency code")
+    user_id: str = Field(..., description="User ID")
+    credits: int = Field(..., description="Credits to purchase")
+
+
+class PaymentVerifyRequest(BaseModel):
+    """Payment verification request"""
+    provider: str = Field(..., description="Payment provider")
+    payment_id: str = Field(..., description="Payment ID")
+    order_id: Optional[str] = Field(None, description="Order ID")
+    signature: Optional[str] = Field(None, description="Payment signature")
+    user_id: str = Field(..., description="User ID")
+    credits: int = Field(..., description="Credits purchased")
+
+
+class SubscriptionUpgradeRequest(BaseModel):
+    """Subscription upgrade request"""
+    user_id: str = Field(..., description="User ID")
+    tier: str = Field(..., description="New subscription tier")
+    payment_id: str = Field(..., description="Payment ID")
+
+
+class SubscriptionCancelRequest(BaseModel):
+    """Subscription cancellation request"""
+    user_id: str = Field(..., description="User ID")
+
+
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
@@ -271,18 +340,31 @@ def get_user_subscription(user_id: Optional[str]) -> str:
 
 
 async def verify_token(authorization: Optional[str] = Header(None)) -> Optional[str]:
-    """Verify JWT token and return user ID"""
+    """
+    Verify JWT token and return user ID
+    
+    Args:
+        authorization: Authorization header with Bearer token
+        
+    Returns:
+        str: User ID if token is valid
+        
+    Raises:
+        HTTPException: If token is invalid or expired
+    """
     if not authorization or not authorization.startswith("Bearer "):
         return None
     
     token = authorization.replace("Bearer ", "")
     
-    # Simple token validation - extract user ID from token
-    # In production, implement proper JWT verification with secret key
-    if token.startswith("dummy-token-"):
-        return token.replace("dummy-token-", "")
-    
-    return None
+    try:
+        # Use proper JWT verification from auth module
+        from auth import verify_access_token
+        payload = verify_access_token(token)
+        return payload.get("user_id")
+    except Exception as e:
+        logger.warning(f"Token verification failed: {str(e)}")
+        return None
 
 
 # ============================================================================
@@ -304,25 +386,33 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     # Check database connection safely
-    db_status = "disconnected"
-    try:
-        if db and db.test_connection():
-            db_status = "connected"
-    except Exception as e:
-        logger.warning(f"Database health check failed: {str(e)}")
-        db_status = f"error: {str(e)[:50]}"
+    return {
+        "status": "ok",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/health/detailed")
+async def detailed_health_check(user_id: str = Depends(verify_token)):
+    """Detailed health check - requires authentication"""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Check database connection
+    db_status = "connected" if db.initialize_pool() else "disconnected"
     
     return {
         "status": "ok",
+        "timestamp": datetime.now().isoformat(),
         "agents": {
             "mvp_builder_agent": "initialized" if mvp_builder_agent else "not initialized",
-            "idea_validation_agent": "initialized" if idea_validation_agent else "not initialized",
-            "business_planning_agent": "initialized" if business_planning_agent else "not initialized",
+            "idea_validator_agent": "initialized" if idea_validator_agent else "not initialized",
             "market_research_agent": "initialized" if market_research_agent else "not initialized",
-            "pitch_deck_agent": "initialized" if pitch_deck_agent else "not initialized",
+            "business_plan_agent": "initialized" if business_plan_agent else "not initialized",
+            "pitch_deck_agent": "initialized" if pitch_deck_agent else "not initialized"
         },
         "database": db_status,
-        "timestamp": datetime.now().isoformat()
+        "cache": "enabled" if cache else "disabled"
     }
 
 
@@ -338,14 +428,16 @@ async def api_health_check():
 
 # Add routes without /api prefix for frontend compatibility
 @app.post("/auth/login")
-async def login_user_compat(request: UserLoginRequest):
+@limiter.limit("10/minute")
+async def login_user_compat(request: Request, user_request: UserLoginRequest):
     """Login user - compatibility route"""
-    return await login_user(request)
+    return await login_user(request, user_request)
 
 @app.post("/auth/register")
-async def register_user_compat(request: UserRegistrationRequest):
+@limiter.limit("5/hour")
+async def register_user_compat(request: Request, user_request: UserRegistrationRequest):
     """Register user - compatibility route"""
-    return await register_user(request)
+    return await register_user(request, user_request)
 
 @app.get("/auth/user/{user_id}")
 async def get_user_info_compat(user_id: str):
@@ -353,31 +445,38 @@ async def get_user_info_compat(user_id: str):
     return await get_user_info(user_id)
 
 @app.post("/api/auth/register")
-async def register_user(request: UserRegistrationRequest):
+@limiter.limit("5/hour")  # Prevent spam registrations
+async def register_user(request: Request, user_request: UserRegistrationRequest):
     """Register a new user"""
     try:
         import uuid
         import hashlib
         
         # Check if user already exists
-        existing_user = db.get_user_by_email(request.email)
+        existing_user = db.get_user_by_email(user_request.email)
         if existing_user:
             raise HTTPException(status_code=400, detail="Email already registered")
         
         # Create user
         user_id = str(uuid.uuid4())
-        password_hash = pwd_context.hash(request.password)
+        password_hash = hash_password(user_request.password)
         
-        if db.create_user(user_id, request.email, request.name, password_hash):
+        if db.create_user(user_id, user_request.email, user_request.name, password_hash):
+            # Generate JWT tokens
+            access_token = create_access_token(user_id, user_request.email)
+            refresh_token = create_refresh_token(user_id)
+            
             return {
                 "status": "success",
                 "message": "User registered successfully",
                 "user": {
                     "id": user_id,
-                    "email": request.email,
-                    "name": request.name,
+                    "email": user_request.email,
+                    "name": user_request.name,
                     "credits": 20
-                }
+                },
+                "token": access_token,
+                "refresh_token": refresh_token
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to create user")
@@ -390,21 +489,61 @@ async def register_user(request: UserRegistrationRequest):
 
 
 @app.post("/api/auth/login")
-async def login_user(request: UserLoginRequest):
+@limiter.limit("10/minute")  # Prevent brute force attacks
+async def login_user(request: Request, user_request: UserLoginRequest):
     """Login user"""
     try:
         import hashlib
         
         # Get user
-        user = db.get_user_by_email(request.email)
+        user = db.get_user_by_email(user_request.email)
         if not user:
-            logger.warning(f"Login attempt for non-existent user: {request.email}")
+            logger.warning(f"Login attempt for non-existent user: {user_request.email}")
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
         # Verify password
-        if not pwd_context.verify(request.password, user.get('password_hash')):
-            logger.warning(f"Invalid password attempt for user: {request.email}")
+        password_hash = user.get('password_hash', '')
+        password_valid = False
+        needs_rehash = False
+        
+        try:
+            # Try bcrypt verification first
+            password_valid = verify_password(user_request.password, password_hash)
+        except Exception as e:
+            # If bcrypt fails, try legacy hash methods (MD5, SHA256)
+            import hashlib
+            logger.info(f"Bcrypt verification failed, trying legacy hash for user: {user_request.email}")
+            
+            # Try MD5
+            md5_hash = hashlib.md5(user_request.password.encode()).hexdigest()
+            if md5_hash == password_hash:
+                password_valid = True
+                needs_rehash = True
+                logger.info(f"User {user_request.email} using legacy MD5 hash")
+            else:
+                # Try SHA256
+                sha256_hash = hashlib.sha256(user_request.password.encode()).hexdigest()
+                if sha256_hash == password_hash:
+                    password_valid = True
+                    needs_rehash = True
+                    logger.info(f"User {user_request.email} using legacy SHA256 hash")
+        
+        if not password_valid:
+            logger.warning(f"Invalid password attempt for user: {user_request.email}")
             raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        # Upgrade to bcrypt if using legacy hash
+        if needs_rehash:
+            new_hash = hash_password(user_request.password)
+            db.execute_query(
+                "UPDATE users SET password_hash = %s WHERE id = %s",
+                (new_hash, user['id'])
+            )
+            logger.info(f"Upgraded password hash to bcrypt for user: {user_request.email}")
+        
+        # Generate JWT tokens
+        access_token = create_access_token(user['id'], user['email'])
+        refresh_token = create_refresh_token(user['id'])
         
         # Store user info in response
         user_data = {
@@ -415,13 +554,14 @@ async def login_user(request: UserLoginRequest):
             "subscription_tier": user.get('subscription_tier', 'free')
         }
         
-        logger.info(f"User logged in successfully: {request.email}")
+        logger.info(f"User logged in successfully: {user_request.email}")
         
         return {
             "status": "success",
             "message": "Login successful",
             "user": user_data,
-            "token": "dummy-token-" + user['id']  # Add a simple token for now
+            "token": access_token,
+            "refresh_token": refresh_token
         }
     
     except HTTPException:
@@ -429,6 +569,206 @@ async def login_user(request: UserLoginRequest):
     except Exception as e:
         logger.error(f"Error logging in: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="An error occurred during login")
+
+
+@app.post("/api/auth/reset-password")
+@limiter.limit("3/hour")
+async def reset_password(request: Request, email: str, new_password: str, admin_key: str = ""):
+    """Reset user password (for testing/admin purposes)"""
+    try:
+        # Simple admin key check (in production, use proper authentication)
+        if admin_key != os.getenv("ADMIN_KEY", "nexora-admin-2024"):
+            raise HTTPException(status_code=403, detail="Unauthorized")
+        
+        # Get user
+        user = db.get_user_by_email(email)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Hash new password
+        new_hash = hash_password(new_password)
+        
+        # Update password
+        db.execute_query(
+            "UPDATE users SET password_hash = %s WHERE email = %s",
+            (new_hash, email)
+        )
+        
+        logger.info(f"Password reset for user: {email}")
+        
+        return {
+            "status": "success",
+            "message": "Password reset successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resetting password: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/auth/refresh")
+@limiter.limit("20/hour")
+async def refresh_token_endpoint(request: Request, token_request: RefreshTokenRequest):
+    """Refresh access token using refresh token"""
+    try:
+        from auth import refresh_access_token
+        
+        new_access_token = refresh_access_token(token_request.refresh_token)
+        if not new_access_token:
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+        
+        return {
+            "status": "success",
+            "token": new_access_token
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error refreshing token: {str(e)}")
+        raise HTTPException(status_code=500, detail="An error occurred during token refresh")
+
+
+# ============================================================================
+# OAUTH ENDPOINTS
+# ============================================================================
+
+@app.get("/api/auth/google")
+async def google_oauth_login():
+    """Initiate Google OAuth login"""
+    try:
+        oauth_url = get_google_oauth_url()
+        return {
+            "status": "success",
+            "url": oauth_url
+        }
+    except Exception as e:
+        logger.error(f"Error initiating Google OAuth: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to initiate Google OAuth")
+
+
+@app.get("/api/auth/google/callback")
+async def google_oauth_callback(code: str, state: Optional[str] = None):
+    """Handle Google OAuth callback"""
+    try:
+        # Exchange code for user info
+        user_info = await exchange_google_code(code)
+        if not user_info:
+            raise HTTPException(status_code=400, detail="Failed to authenticate with Google")
+        
+        # Check if user exists
+        existing_user = db.get_user_by_email(user_info["email"])
+        
+        if existing_user:
+            # User exists, log them in
+            user_id = existing_user['id']
+            email = existing_user['email']
+        else:
+            # Create new user
+            user_id = str(uuid.uuid4())
+            password_hash = hash_password(secrets.token_urlsafe(32))  # Random password for OAuth users
+            
+            if not db.create_user(user_id, user_info["email"], user_info["name"], password_hash):
+                raise HTTPException(status_code=500, detail="Failed to create user")
+            
+            email = user_info["email"]
+        
+        # Generate tokens
+        access_token = create_access_token(user_id, email, {"oauth_provider": "google"})
+        refresh_token = create_refresh_token(user_id)
+        
+        # Get user data
+        user = db.get_user_by_id(user_id)
+        
+        return {
+            "status": "success",
+            "message": "Google authentication successful",
+            "user": {
+                "id": user['id'],
+                "email": user['email'],
+                "name": user['name'],
+                "credits": user.get('credits', 0),
+                "subscription_tier": user.get('subscription_tier', 'free')
+            },
+            "token": access_token,
+            "refresh_token": refresh_token
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in Google OAuth callback: {str(e)}")
+        raise HTTPException(status_code=500, detail="An error occurred during Google authentication")
+
+
+@app.get("/api/auth/github")
+async def github_oauth_login():
+    """Initiate GitHub OAuth login"""
+    try:
+        oauth_url = get_github_oauth_url()
+        return {
+            "status": "success",
+            "url": oauth_url
+        }
+    except Exception as e:
+        logger.error(f"Error initiating GitHub OAuth: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to initiate GitHub OAuth")
+
+
+@app.get("/api/auth/github/callback")
+async def github_oauth_callback(code: str, state: Optional[str] = None):
+    """Handle GitHub OAuth callback"""
+    try:
+        # Exchange code for user info
+        user_info = await exchange_github_code(code)
+        if not user_info:
+            raise HTTPException(status_code=400, detail="Failed to authenticate with GitHub")
+        
+        # Check if user exists
+        existing_user = db.get_user_by_email(user_info["email"])
+        
+        if existing_user:
+            # User exists, log them in
+            user_id = existing_user['id']
+            email = existing_user['email']
+        else:
+            # Create new user
+            user_id = str(uuid.uuid4())
+            password_hash = hash_password(secrets.token_urlsafe(32))  # Random password for OAuth users
+            
+            if not db.create_user(user_id, user_info["email"], user_info["name"], password_hash):
+                raise HTTPException(status_code=500, detail="Failed to create user")
+            
+            email = user_info["email"]
+        
+        # Generate tokens
+        access_token = create_access_token(user_id, email, {"oauth_provider": "github"})
+        refresh_token = create_refresh_token(user_id)
+        
+        # Get user data
+        user = db.get_user_by_id(user_id)
+        
+        return {
+            "status": "success",
+            "message": "GitHub authentication successful",
+            "user": {
+                "id": user['id'],
+                "email": user['email'],
+                "name": user['name'],
+                "credits": user.get('credits', 0),
+                "subscription_tier": user.get('subscription_tier', 'free')
+            },
+            "token": access_token,
+            "refresh_token": refresh_token
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in GitHub OAuth callback: {str(e)}")
+        raise HTTPException(status_code=500, detail="An error occurred during GitHub authentication")
 
 
 @app.get("/api/user/{user_id}")
@@ -493,6 +833,186 @@ async def update_user_credits(user_id: str, request: BaseModel):
         raise
     except Exception as e:
         logger.error(f"Error updating user credits: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# PAYMENT & SUBSCRIPTION ENDPOINTS
+# ============================================================================
+
+@app.get("/api/subscription/tiers")
+async def get_subscription_tiers():
+    """Get all available subscription tiers"""
+    try:
+        if not subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription system not initialized")
+        
+        tiers = subscription_manager.get_all_tiers()
+        return {
+            "status": "success",
+            "tiers": tiers
+        }
+    except Exception as e:
+        logger.error(f"Error getting subscription tiers: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/subscription/{user_id}")
+async def get_user_subscription(user_id: str, token: Optional[str] = Depends(verify_token)):
+    """Get user's subscription details"""
+    try:
+        if not subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription system not initialized")
+        
+        subscription = subscription_manager.get_user_subscription(user_id)
+        if not subscription:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        
+        return {
+            "status": "success",
+            "subscription": subscription
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/payment/create-order")
+@limiter.limit("10/hour")
+async def create_payment_order(
+    request: Request,
+    payment_request: PaymentOrderRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Create a payment order"""
+    try:
+        metadata = {
+            "user_id": payment_request.user_id,
+            "credits": payment_request.credits,
+            "type": "credit_purchase"
+        }
+        
+        order = payment_manager.create_order(
+            payment_request.amount,
+            payment_request.currency,
+            metadata=metadata
+        )
+        
+        return {
+            "status": "success",
+            "order": order
+        }
+    except Exception as e:
+        logger.error(f"Error creating payment order: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/payment/verify")
+async def verify_payment(
+    verify_request: PaymentVerifyRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Verify payment and add credits"""
+    try:
+        provider_enum = PaymentProvider(verify_request.provider)
+        
+        # Verify payment
+        is_valid = payment_manager.verify_payment(
+            provider_enum,
+            verify_request.payment_id,
+            verify_request.order_id,
+            verify_request.signature
+        )
+        
+        if not is_valid:
+            raise HTTPException(status_code=400, detail="Payment verification failed")
+        
+        # Add credits to user
+        if subscription_manager:
+            success = subscription_manager.add_credits(
+                verify_request.user_id,
+                verify_request.credits,
+                f"purchase_{verify_request.payment_id}"
+            )
+            if not success:
+                raise HTTPException(status_code=500, detail="Failed to add credits")
+        
+        return {
+            "status": "success",
+            "message": "Payment verified and credits added",
+            "credits_added": verify_request.credits
+        }
+    
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid payment provider")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error verifying payment: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/subscription/upgrade")
+@limiter.limit("5/hour")
+async def upgrade_subscription(
+    request: Request,
+    upgrade_request: SubscriptionUpgradeRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Upgrade user subscription"""
+    try:
+        if not subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription system not initialized")
+        
+        tier_enum = SubscriptionTier(upgrade_request.tier)
+        success = subscription_manager.upgrade_subscription(
+            upgrade_request.user_id,
+            tier_enum,
+            upgrade_request.payment_id
+        )
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to upgrade subscription")
+        
+        return {
+            "status": "success",
+            "message": f"Subscription upgraded to {upgrade_request.tier}",
+            "subscription": subscription_manager.get_user_subscription(upgrade_request.user_id)
+        }
+    
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid subscription tier")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error upgrading subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/subscription/cancel")
+async def cancel_subscription(
+    cancel_request: SubscriptionCancelRequest,
+    token: Optional[str] = Depends(verify_token)
+):
+    """Cancel user subscription"""
+    try:
+        if not subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription system not initialized")
+        
+        success = subscription_manager.cancel_subscription(cancel_request.user_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to cancel subscription")
+        
+        return {
+            "status": "success",
+            "message": "Subscription cancelled. Will downgrade to free at end of period."
+        }
+    
+    except Exception as e:
+        logger.error(f"Error cancelling subscription: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -596,12 +1116,16 @@ Respond warmly and professionally. Introduce yourself briefly and highlight your
 Keep responses concise (2-3 sentences). Be encouraging and action-oriented. End with a question to engage the user."""
         
         elif is_build_request:
-            # Use dynamic prompt for build requests
-            system_prompt = build_dynamic_prompt(
-                user_prompt=chat_request.message,
-                is_edit=False,
-                conversation_messages=conversation_context
-            )
+            # Use HTML-optimized prompt for build requests
+            system_prompt = get_html_system_prompt()
+            
+            # Add conversation context
+            if conversation_context:
+                system_prompt += "\n\n## Recent Conversation:\n"
+                for msg in conversation_context[-3:]:
+                    role = msg.get('role', 'user')
+                    content = msg.get('content', '')[:100]
+                    system_prompt += f"- {role}: {content}...\n"
         else:
             system_prompt = """You are Nexora AI, a professional assistant for application development.
 
@@ -682,6 +1206,7 @@ async def stream_mvp_generation(request: Request, mvp_request: MVPStreamRequest)
             try:
                 # Send initial status
                 yield f"data: {json.dumps({'type': 'status', 'message': 'Initializing sandbox environment...'})}\n\n"
+                await asyncio.sleep(0)  # Allow event loop to process
                 
                 # Create sandbox first (using base template)
                 sandbox = await mvp_builder_agent.create_sandbox(template="base")
@@ -700,96 +1225,306 @@ async def stream_mvp_generation(request: Request, mvp_request: MVPStreamRequest)
                 # Send sandbox URL
                 yield f"data: {json.dumps({'type': 'sandbox_url', 'url': sandbox_url, 'sandboxId': sandbox_id, 'isMock': sandbox_id.startswith('mock-')})}\n\n"
                 
-                # Build dynamic prompt for code generation
-                system_prompt = build_dynamic_prompt(
-                    user_prompt=mvp_request.prompt,
-                    is_edit=False,
-                    conversation_messages=mvp_request.conversationHistory
-                )
+                # Use HTML/CSS/JS optimized prompt for better completion
+                system_prompt = get_html_system_prompt()
+                
+                # Add explicit file count reminder to the user prompt
+                enhanced_prompt = f"""{mvp_request.prompt}
+
+🚨 CRITICAL REQUIREMENTS - YOU MUST FOLLOW THESE:
+1. Generate AT LEAST 3 files: index.html, styles.css, script.js
+2. Use ONLY the <file path="...">...</file> XML format
+3. Write COMPLETE code - NO truncation, NO "...", NO placeholders
+4. CLOSE ALL XML tags - every <file path="..."> MUST have </file>
+5. Make each file production-ready and fully functional
+
+Remember: The system expects 3-7 complete files. Don't stop until all files are done!"""
                 
                 # Send generation start status with model info
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Using DeepSeek V3.1 to generate your code...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'status', 'message': '🚀 Using DeepSeek V3.1 (32K context) - Generating modern HTML/CSS/JS application (3-7 files)...'})}\n\n"
                 
-                logger.info(f"🚀 Using DeepSeek V3.1 (Hugging Face) for MVP generation")
+                logger.info(f"🚀 Using DeepSeek V3.1 (Hugging Face) with 32K token context for comprehensive MVP generation")
                 
                 # Start code generation with streaming
                 content_buffer = ""
                 current_file = None
                 file_start_pattern = re.compile(r'<file path="([^"]+)">')
+                file_end_pattern = re.compile(r'</file>')
                 files_created = 0
+                files_map = {}  # Store all generated files
+                full_ai_response = ""  # Track complete AI response
+                
+                # Fallback: Track if we're getting code without XML tags
+                detected_html = False
+                detected_css = False
+                detected_js = False
                 
                 async for chunk in mvp_builder_agent.get_ai_response(
-                    prompt=mvp_request.prompt,
+                    prompt=enhanced_prompt,
                     model=AIModel.DEEPSEEK,
                     system_prompt=system_prompt,
                     stream=True
                 ):
                     content_buffer += chunk
+                    full_ai_response += chunk
+                    
+                    # Stream AI content to frontend (for display)
+                    yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+                    
+                    # Debug: Log when we see file tags
+                    if '<file path=' in chunk:
+                        logger.info(f"🔍 Detected file tag in chunk: {chunk[:100]}")
+                    if '</file>' in chunk:
+                        logger.info(f"🔍 Detected file end tag in chunk")
                     
                     # Parse for XML file operations: <file path="...">content</file>
-                    if current_file is None and '<file path="' in content_buffer:
-                        # Detect file creation start
-                        match = file_start_pattern.search(content_buffer)
-                        if match:
-                            file_path = match.group(1)
-                            # Determine language from extension
-                            ext = file_path.split('.')[-1].lower()
-                            language_map = {
-                                'js': 'javascript', 'jsx': 'javascript', 
-                                'ts': 'typescript', 'tsx': 'typescript',
-                                'py': 'python', 'html': 'html', 'css': 'css',
-                                'json': 'json', 'md': 'markdown'
-                            }
-                            language = language_map.get(ext, 'plaintext')
-                            
-                            current_file = {
-                                "path": file_path,
-                                "language": language,
-                                "content": "",
-                                "start_index": match.end()
-                            }
-                            
-                            # Send file operation start
-                            yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': file_path, 'status': 'processing', 'language': language})}\n\n"
+                    # Only try to parse if we have enough content
+                    while True:
+                        if current_file is None:
+                            # Look for file start tag
+                            match = file_start_pattern.search(content_buffer)
+                            if match:
+                                file_path = match.group(1)
+                                # Determine language from extension
+                                ext = file_path.split('.')[-1].lower()
+                                language_map = {
+                                    'js': 'javascript', 'jsx': 'javascript', 
+                                    'ts': 'typescript', 'tsx': 'typescript',
+                                    'py': 'python', 'html': 'html', 'css': 'css',
+                                    'json': 'json', 'md': 'markdown', 'yml': 'yaml',
+                                    'yaml': 'yaml', 'sh': 'shell', 'txt': 'plaintext'
+                                }
+                                language = language_map.get(ext, 'plaintext')
+                                
+                                current_file = {
+                                    "path": file_path,
+                                    "language": language,
+                                    "content": "",
+                                    "start_index": match.end()
+                                }
+                                
+                                # Send file operation start
+                                yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': file_path, 'status': 'processing', 'language': language})}\n\n"
+                                
+                                # Remove everything before the file content start
+                                content_buffer = content_buffer[match.end():]
+                                current_file["start_index"] = 0
+                            else:
+                                # No file start tag found yet, wait for more content
+                                break
+                        else:
+                            # Look for file end tag
+                            end_match = file_end_pattern.search(content_buffer)
+                            if end_match:
+                                # Extract content between <file path="..."> and </file>
+                                end_tag_index = end_match.start()
+                                file_content = content_buffer[current_file["start_index"]:end_tag_index].strip()
+                                
+                                current_file["content"] = file_content
+                                
+                                # Store file in map
+                                files_map[current_file["path"]] = file_content
+                                
+                                # Write file to sandbox
+                                try:
+                                    await mvp_builder_agent.update_sandbox_file(
+                                        sandbox_id=sandbox.get('id'),
+                                        file_path=current_file["path"],
+                                        content=file_content
+                                    )
+                                    
+                                    files_created += 1
+                                    
+                                    # Send file completion with clean status
+                                    yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': current_file['path'], 'status': 'completed', 'content': file_content, 'language': current_file['language']})}\n\n"
+                                    
+                                    # Send progress update
+                                    file_path_display = current_file["path"]
+                                    yield f"data: {json.dumps({'type': 'status', 'message': f'✅ Created {files_created} file(s) - {file_path_display}'})}\n\n"
+                                    
+                                except Exception as e:
+                                    logger.error(f"Error writing file to sandbox: {e}")
+                                    yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': current_file['path'], 'status': 'error', 'error': str(e)})}\n\n"
+                                
+                                # Reset for next file - remove processed content including end tag
+                                content_buffer = content_buffer[end_match.end():]
+                                current_file = None
+                            else:
+                                # No end tag found yet, wait for more content
+                                break
+                
+                # Debug: Log full response summary
+                logger.info(f"📊 AI Response Summary:")
+                logger.info(f"   - Total length: {len(full_ai_response)} characters")
+                logger.info(f"   - Contains '<file path=': {full_ai_response.count('<file path=')}")
+                logger.info(f"   - Contains '</file>': {full_ai_response.count('</file>')}")
+                logger.info(f"   - Files created: {files_created}")
+                
+                # FALLBACK: If no files were created, try to extract code blocks
+                if files_created == 0:
+                    logger.warning(f"⚠️ No complete files found! Attempting fallback code extraction...")
                     
-                    # Collect file content and detect completion
-                    if current_file and '</file>' in content_buffer:
-                        # Extract content between <file path="..."> and </file>
-                        end_tag_index = content_buffer.index('</file>')
-                        file_content = content_buffer[current_file["start_index"]:end_tag_index].strip()
+                    # Check if we have incomplete XML tags (stream was truncated)
+                    incomplete_xml = False
+                    if '<file path=' in full_ai_response:
+                        file_tag_count = full_ai_response.count('<file path=')
+                        close_tag_count = full_ai_response.count('</file>')
+                        if file_tag_count > close_tag_count:
+                            incomplete_xml = True
+                            logger.warning(f"⚠️ Detected incomplete XML tags - {file_tag_count} opening tags, {close_tag_count} closing tags")
+                    
+                    # Try to extract incomplete XML files first
+                    if incomplete_xml:
+                        file_pattern = r'<file path="([^"]+)">(.*?)(?:</file>|$)'
+                        for match in re.finditer(file_pattern, full_ai_response, re.DOTALL):
+                            file_path = match.group(1)
+                            file_content = match.group(2).strip()
+                            
+                            # Skip if already created
+                            if file_path in files_map:
+                                continue
+                            
+                            # Complete truncated files based on type
+                            if file_path.endswith('.html') and not file_content.strip().endswith('</html>'):
+                                file_content += '\n</html>'
+                                logger.info(f"⚠️ Completed truncated HTML file: {file_path}")
+                            elif file_path.endswith('.js') and file_content.count('{') > file_content.count('}'):
+                                # Add missing closing braces
+                                missing_braces = file_content.count('{') - file_content.count('}')
+                                file_content += '\n' + '}' * missing_braces
+                                logger.info(f"⚠️ Added {missing_braces} missing closing braces to {file_path}")
+                            
+                            try:
+                                await mvp_builder_agent.update_sandbox_file(
+                                    sandbox_id=sandbox.get('id'),
+                                    file_path=file_path,
+                                    content=file_content
+                                )
+                                files_map[file_path] = file_content
+                                files_created += 1
+                                
+                                # Determine language
+                                ext = file_path.split('.')[-1].lower()
+                                language_map = {'js': 'javascript', 'html': 'html', 'css': 'css', 'md': 'markdown'}
+                                language = language_map.get(ext, 'plaintext')
+                                
+                                yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': file_path, 'status': 'completed', 'content': file_content, 'language': language})}\n\n"
+                                logger.info(f"✅ Extracted incomplete XML file: {file_path}")
+                            except Exception as e:
+                                logger.error(f"Error creating file {file_path}: {e}")
+                    
+                    # Try to extract HTML (even if incomplete)
+                    if 'index.html' not in files_map:
+                        html_match = re.search(r'<!DOCTYPE html>.*', full_ai_response, re.DOTALL | re.IGNORECASE)
+                        if html_match:
+                            html_content = html_match.group(0)
+                            # If no closing </html>, add it
+                            if not html_content.strip().endswith('</html>'):
+                                html_content += '\n</html>'
+                                logger.info(f"⚠️ Added missing </html> tag")
+                            try:
+                                await mvp_builder_agent.update_sandbox_file(
+                                    sandbox_id=sandbox.get('id'),
+                                    file_path='index.html',
+                                    content=html_content
+                                )
+                                files_map['index.html'] = html_content
+                                files_created += 1
+                                yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': 'index.html', 'status': 'completed', 'content': html_content, 'language': 'html'})}\n\n"
+                                logger.info(f"✅ Extracted HTML file (fallback)")
+                            except Exception as e:
+                                logger.error(f"Error creating HTML file: {e}")
+                    
+                    # Try to extract CSS from <style> tags or standalone CSS blocks
+                    if 'styles.css' not in files_map:
+                        # First try <style> tags
+                        css_match = re.search(r'<style[^>]*>(.*?)</style>', full_ai_response, re.DOTALL | re.IGNORECASE)
+                        if css_match:
+                            css_content = css_match.group(1).strip()
+                        else:
+                            # Try to find standalone CSS (look for CSS patterns)
+                            css_pattern = r'/\*[^*]*\*+(?:[^/*][^*]*\*+)*/|(?:^|\n)\s*(?:[.#]?[\w-]+|:root)\s*{[^}]*}'
+                            css_matches = re.findall(css_pattern, full_ai_response, re.MULTILINE)
+                            if css_matches:
+                                css_content = '\n'.join(css_matches)
+                            else:
+                                css_content = None
                         
-                        current_file["content"] = file_content
+                        if css_content:
+                            try:
+                                await mvp_builder_agent.update_sandbox_file(
+                                    sandbox_id=sandbox.get('id'),
+                                    file_path='styles.css',
+                                    content=css_content
+                                )
+                                files_map['styles.css'] = css_content
+                                files_created += 1
+                                yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': 'styles.css', 'status': 'completed', 'content': css_content, 'language': 'css'})}\n\n"
+                                logger.info(f"✅ Extracted CSS file (fallback)")
+                            except Exception as e:
+                                logger.error(f"Error creating CSS file: {e}")
+                    
+                    # Try to extract JavaScript from <script> tags or standalone JS blocks
+                    if 'script.js' not in files_map:
+                        # First try <script> tags
+                        js_match = re.search(r'<script[^>]*>(.*?)</script>', full_ai_response, re.DOTALL | re.IGNORECASE)
+                        if js_match:
+                            js_content = js_match.group(1).strip()
+                        else:
+                            # Try to find standalone JavaScript (look for function declarations, event listeners, etc.)
+                            js_pattern = r'(?:document\.addEventListener|function\s+\w+|const\s+\w+\s*=|let\s+\w+\s*=|var\s+\w+\s*=)[^;]*;?'
+                            js_matches = re.findall(js_pattern, full_ai_response, re.MULTILINE)
+                            if js_matches:
+                                js_content = '\n'.join(js_matches)
+                            else:
+                                js_content = None
                         
-                        # Write file to sandbox
-                        try:
-                            await mvp_builder_agent.update_sandbox_file(
-                                sandbox_id=sandbox.get('id'),
-                                file_path=current_file["path"],
-                                content=file_content
-                            )
-                            
-                            files_created += 1
-                            
-                            # Send file completion with clean status
-                            yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': current_file['path'], 'status': 'completed', 'content': file_content, 'language': current_file['language']})}\n\n"
-                            
-                            # Send progress update
-                            yield f"data: {json.dumps({'type': 'status', 'message': f'Created {files_created} file(s)...'})}\n\n"
-                            
-                        except Exception as e:
-                            logger.error(f"Error writing file to sandbox: {e}")
-                            yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': current_file['path'], 'status': 'error', 'error': str(e)})}\n\n"
-                        
-                        # Reset for next file
-                        content_buffer = content_buffer[end_tag_index + 7:]  # Remove processed content
-                        current_file = None
+                        if js_content:
+                            try:
+                                await mvp_builder_agent.update_sandbox_file(
+                                    sandbox_id=sandbox.get('id'),
+                                    file_path='script.js',
+                                    content=js_content
+                                )
+                                files_map['script.js'] = js_content
+                                files_created += 1
+                                yield f"data: {json.dumps({'type': 'file_operation', 'operation': 'create', 'path': 'script.js', 'status': 'completed', 'content': js_content, 'language': 'javascript'})}\n\n"
+                                logger.info(f"✅ Extracted JavaScript file (fallback)")
+                            except Exception as e:
+                                logger.error(f"Error creating JS file: {e}")
+                    
+                    if files_created > 0:
+                        logger.info(f"✅ Fallback extraction successful: {files_created} files created")
+                    else:
+                        logger.error(f"❌ Fallback extraction failed! Response preview (first 500 chars):")
+                        logger.error(full_ai_response[:500])
+                        logger.error(f"Response preview (last 500 chars):")
+                        logger.error(full_ai_response[-500:])
+                
+                # Validate file count
+                if files_created < 3:
+                    logger.warning(f"⚠️ Only {files_created} files generated - below minimum of 3!")
+                    yield f"data: {json.dumps({'type': 'warning', 'message': f'Warning: Only {files_created} files generated. Minimum is 3 (index.html, styles.css, script.js).'})}\n\n"
+                elif files_created >= 3:
+                    logger.info(f"✅ Good file count: {files_created} files generated")
+                
+                # Log generation summary
+                logger.info(f"✅ Generation complete: {files_created} files created")
+                logger.info(f"Files: {list(files_map.keys())}")
                 
                 # Send completion with summary
-                yield f"data: {json.dumps({'type': 'complete', 'message': f'Successfully generated {files_created} files', 'files_count': files_created})}\n\n"
+                yield f"data: {json.dumps({'type': 'complete', 'message': f'Successfully generated {files_created} files', 'files_count': files_created, 'files': list(files_map.keys())})}\n\n"
                 
+            except asyncio.CancelledError:
+                logger.warning("Stream was cancelled by client")
+                # Don't yield anything, just exit gracefully
+                return
             except Exception as e:
                 logger.error(f"Error in stream generation: {e}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Generation failed: {str(e)}'})}\n\n"
+                try:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Generation failed: {str(e)}'})}\n\n"
+                except:
+                    pass  # Client may have disconnected
         
         return StreamingResponse(
             generate_stream(),
@@ -901,9 +1636,18 @@ async def execute_code(request: ExecuteCodeRequest):
 # MARKET RESEARCH API ENDPOINTS
 # ============================================================================
 
+# Request Models for Market Research
+class MarketResearchRequest(BaseModel):
+    """Market research request model"""
+    industry: str = Field(default="", description="Industry or sector")
+    target_segment: str = Field(default="", description="Target market segment")
+    product_description: str = Field(default="", description="Product description")
+    geographic_scope: str = Field(default="Global", description="Geographic scope")
+    idea: str = Field(default="", description="Business idea")
+
 @app.post("/api/market-research/research")
 async def conduct_market_research(
-    request: BaseModel,
+    request: MarketResearchRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Conduct comprehensive market research"""
@@ -931,7 +1675,7 @@ async def conduct_market_research(
 
 @app.post("/api/market-research/competitors")
 async def discover_competitors(
-    request: BaseModel,
+    request: MarketResearchRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Discover competitors in the market"""
@@ -958,7 +1702,7 @@ async def discover_competitors(
 
 @app.post("/api/market-research/market-size")
 async def estimate_market_size(
-    request: BaseModel,
+    request: MarketResearchRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Estimate market size using TAM-SAM-SOM framework"""
@@ -986,7 +1730,7 @@ async def estimate_market_size(
 
 @app.post("/api/market-research/trends")
 async def analyze_trends(
-    request: BaseModel,
+    request: MarketResearchRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Analyze market trends"""
@@ -1014,7 +1758,7 @@ async def analyze_trends(
 
 @app.post("/api/market-research/sentiment")
 async def extract_sentiment(
-    request: BaseModel,
+    request: MarketResearchRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Extract user sentiment and pain points"""
@@ -1042,7 +1786,7 @@ async def extract_sentiment(
 
 @app.post("/api/market-research/pricing")
 async def analyze_pricing(
-    request: BaseModel,
+    request: MarketResearchRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Analyze competitor pricing models"""
@@ -1074,7 +1818,7 @@ async def analyze_pricing(
 
 @app.post("/api/market-research/swot")
 async def generate_swot(
-    request: BaseModel,
+    request: MarketResearchRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Generate SWOT analysis"""
@@ -1102,7 +1846,7 @@ async def generate_swot(
 
 @app.post("/api/market-research/market-gaps")
 async def identify_market_gaps(
-    request: BaseModel,
+    request: MarketResearchRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Identify market gaps and opportunities"""
@@ -1174,9 +1918,17 @@ async def market_research_health():
 # BUSINESS PLANNING ADDITIONAL ENDPOINTS
 # ============================================================================
 
+# Request Model for Business Planning
+class BusinessPlanningRequest(BaseModel):
+    """Business planning request model"""
+    idea: str = Field(default="", description="Business idea")
+    target_market: str = Field(default="", description="Target market")
+    industry: str = Field(default="", description="Industry")
+    business_model: str = Field(default="", description="Business model")
+
 @app.post("/api/business-plan/lean-canvas")
 async def generate_lean_canvas(
-    request: BaseModel,
+    request: BusinessPlanningRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Generate Lean Canvas for business idea"""
@@ -1204,7 +1956,7 @@ async def generate_lean_canvas(
 
 @app.post("/api/business-plan/financials")
 async def estimate_financials(
-    request: BaseModel,
+    request: BusinessPlanningRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Estimate financial projections"""
@@ -1232,7 +1984,7 @@ async def estimate_financials(
 
 @app.post("/api/business-plan/team")
 async def map_team_roles(
-    request: BaseModel,
+    request: BusinessPlanningRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Map team roles and composition"""
@@ -1260,7 +2012,7 @@ async def map_team_roles(
 
 @app.post("/api/business-plan/marketing")
 async def build_marketing_strategy(
-    request: BaseModel,
+    request: BusinessPlanningRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Build marketing strategy"""
@@ -1288,7 +2040,7 @@ async def build_marketing_strategy(
 
 @app.post("/api/business-plan/compliance")
 async def check_compliance(
-    request: BaseModel,
+    request: BusinessPlanningRequest,
     token: Optional[str] = Depends(verify_token)
 ):
     """Check regulatory compliance requirements"""
@@ -1773,25 +2525,22 @@ Requirements:
             if scraped_parts:
                 scraped_content = "\n\n".join(scraped_parts)
         
-        # Build dynamic system prompt using prompt templates
-        system_prompt = build_dynamic_prompt(
-            user_prompt=user_prompt,
-            is_edit=False,
-            target_files=None,
-            conversation_messages=None,
-            conversation_edits=None,
-            scraped_content=scraped_content
-        )
+        # Use HTML-optimized system prompt for better completion
+        system_prompt = get_html_system_prompt()
+        
+        # Add scraped content context if available
+        if scraped_content:
+            system_prompt += f"\n\n## Reference Website Content:\n{scraped_content}\n"
         
         # Add MVP-specific instructions
         system_prompt += """
 
 MVP GENERATION SPECIFIC RULES:
-1. Generate ALL files needed for a working application
+1. Generate 3-7 complete files (index.html, styles.css, script.js + optional utils/animations)
 2. Use the <file path="...">...</file> format for each file - DO NOT use markdown code blocks
-3. MUST include: App.jsx, components, index.css with Tailwind directives
+3. Make each file 100% COMPLETE with ZERO truncation
 4. Make the code production-ready and fully functional
-5. Ensure responsive design and beautiful UI
+5. Ensure responsive design and beautiful UI with Tailwind CSS
 6. Include proper imports and exports in all files
 7. CRITICAL: Do NOT output "component.markdown" or any markdown file references
 8. CRITICAL: Use ONLY the <file path="...">content</file> XML format, NOT ```language blocks
@@ -2914,31 +3663,8 @@ async def subscribe_newsletter(request: BaseModel):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Helper functions for JWT
-def create_access_token(data: dict):
-    """Create JWT access token"""
-    import jwt
-    from datetime import timedelta
-    
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=60)
-    to_encode.update({"exp": expire})
-    
-    secret_key = os.getenv("JWT_SECRET_KEY", "your-secret-key")
-    return jwt.encode(to_encode, secret_key, algorithm="HS256")
-
-
-def create_refresh_token(data: dict):
-    """Create JWT refresh token"""
-    import jwt
-    from datetime import timedelta
-    
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=30)
-    to_encode.update({"exp": expire})
-    
-    secret_key = os.getenv("JWT_SECRET_KEY", "your-secret-key")
-    return jwt.encode(to_encode, secret_key, algorithm="HS256")
+# JWT helper functions are imported from auth.py
+# Removed duplicate functions to avoid conflicts
 
 
 # ============================================================================
